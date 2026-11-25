@@ -91,6 +91,13 @@ void main() {
         .writeAsString('fake-wasm-bytes');
     await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.mjs')
         .writeAsString('fake-mjs-glue');
+    // JSEP pair (2026-11-26): the files the 1.30.0 loader actually
+    // requests. The non-JSEP files above stay as generic /ort/ fixtures;
+    // the JSEP files below are what the pre-flight contract gates on.
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs')
+        .writeAsString('fake-jsep-mjs-glue');
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm')
+        .writeAsString('fake-jsep-wasm-bytes');
     await File('${dir.path}/model-lite.onnx').writeAsString('fake-model');
     await File('${dir.path}/model-full.onnx').writeAsString('fake-model-full');
     await File('${dir.path}/ref-v2.json').writeAsString('{"ayahs":[]}');
@@ -129,6 +136,43 @@ void main() {
     final (refStatus, refBody, _) = await _get(server, '/models/ref-v2.json');
     expect(refStatus, 200);
     expect(refBody, '{"ayahs":[]}');
+  });
+
+  // --- 2026-11-26 JSEP fix: the loader requests ONLY the JSEP pair ---
+  // (pro-build-28 404'd on ort-wasm-simd-threaded.jsep.mjs while the
+  // non-JSEP pair was served and verified). The /ort/ branch is generic,
+  // so no server change was needed — these tests pin the serving
+  // behaviour the fix depends on: both JSEP files 200 with the right
+  // bytes and MIME types, and a missing JSEP file a clean 404.
+
+  test('serves the JSEP pair from /ort/<version>/ (the pro-build-28 404)',
+      () async {
+    final (mjsStatus, mjsBody, mjsHeaders) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs',
+    );
+    expect(mjsStatus, 200);
+    expect(mjsBody, 'fake-jsep-mjs-glue');
+    expect(mjsHeaders.value('content-type'), contains('text/javascript'));
+    expect(mjsHeaders.value('cross-origin-opener-policy'), 'same-origin');
+    final (wasmStatus, wasmBody, wasmHeaders) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+    );
+    expect(wasmStatus, 200);
+    expect(wasmBody, 'fake-jsep-wasm-bytes');
+    expect(wasmHeaders.value('content-type'), contains('application/wasm'));
+  });
+
+  test('missing JSEP file is a clean 404 naming the path', () async {
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm')
+        .delete();
+    final (status, body, _) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+    );
+    expect(status, 404);
+    expect(body, contains('ort-wasm-simd-threaded.jsep.wasm'));
   });
 
   test('unknown paths 404 (missing WASM file is a clean 404)', () async {
@@ -223,6 +267,58 @@ void main() {
         'reference',
         expectedBytes: '{"ayahs":[]}'.length,
       );
+    });
+
+    test('JSEP pre-flight contract: 200 + exact pinned size per file',
+        () async {
+      // Mirrors WebViewEngine's pre-flight loop over kOrtWasmAssets
+      // (2026-11-26): each JSEP file must arrive with HTTP 200 AND its
+      // exact pinned byte count — 200 + non-empty used to pass a
+      // truncated .wasm while the load 404'd on the phone.
+      await checkServed(
+        '${server.baseUrl}ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs',
+        'JSEP loader glue',
+        expectedBytes: 'fake-jsep-mjs-glue'.length,
+      );
+      await checkServed(
+        '${server.baseUrl}ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+        'JSEP runtime',
+        expectedBytes: 'fake-jsep-wasm-bytes'.length,
+      );
+    });
+
+    test('JSEP pre-flight fails naming URL + expected/actual on wrong size',
+        () async {
+      const url = 'ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm';
+      try {
+        await checkServed(
+          '${server.baseUrl}$url',
+          'JSEP runtime',
+          expectedBytes: 999,
+        );
+        fail('expected checkServed to throw on a JSEP size mismatch');
+      } on CheckFailed catch (e) {
+        expect(e.message, contains(url));
+        expect(e.message, contains('999'));
+        expect(e.message, contains('${'fake-jsep-wasm-bytes'.length}'));
+      }
+    });
+
+    test('JSEP pre-flight fails naming URL + HTTP status on a 404',
+        () async {
+      const url = 'ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs';
+      await File('${dir.path}/$url').delete();
+      try {
+        await checkServed(
+          '${server.baseUrl}$url',
+          'JSEP loader glue',
+          expectedBytes: 10,
+        );
+        fail('expected checkServed to throw on a missing JSEP file');
+      } on CheckFailed catch (e) {
+        expect(e.message, contains(url));
+        expect(e.message, contains('404'));
+      }
     });
 
     test('fails naming URL + expected/actual on a wrong size', () async {
