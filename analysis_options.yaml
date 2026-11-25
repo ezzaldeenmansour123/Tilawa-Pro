@@ -1,0 +1,5 @@
+# Keeps local analysis identical to CI (flutter create generates this same include there).
+analyzer:
+  exclude:
+    - build/**
+include: package:flutter_lints/flutter.yaml

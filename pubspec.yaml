@@ -1,0 +1,46 @@
+name: tilawa
+description: "تلاوة — تطبيق القرآن الكريم: المصحف العثماني، التفاسير، التلاوة الصوتية، تذكير الورد"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: ^1.11.1
+  sqlite3: ^2.4.6
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.5
+  shared_preferences: ^2.3.5
+  share_plus: ^10.1.4
+  url_launcher: ^6.3.1
+  crypto: ^3.0.6
+  # 23.x needs compileSdk 37, but the Actions runner cannot install the
+  # android-37 platform (sdkmanager: package not found); 22.3.3 is the
+  # last release that compiles against SDK 36.
+  flutter_local_notifications: ^22.3.3
+  timezone: ^0.11.2
+  flutter_timezone: ^5.1.1
+  just_audio: ^0.10.6
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/quran.db
+    - assets/quran.db.sha256
+    - assets/fonts/
+  fonts:
+    - family: Amiri
+      fonts:
+        - asset: assets/fonts/Amiri-Regular.ttf
+        - asset: assets/fonts/Amiri-Bold.ttf
+          weight: 700
