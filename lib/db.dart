@@ -9,6 +9,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+// نُقلت النماذج (Surah/Ayah/Ijaz/Reciter + reciters/offlineTafsirs/onlineTafsirs) إلى data/models.dart — Phase 1.
+import 'data/models.dart';
+export 'data/models.dart';
+
+// البحث المعجمي (FTS3 — Lexicon): بناء الاستعلام الخالص من
+// search/lexicon_search.dart؛ والبحث المدعوم بالقاعدة هنا.
+import 'search/lexicon_search.dart';
+
 /// Must stay identical to norm() in tools/build_db.py.
 /// Uthmani spelling: the dagger alef (U+0670) is a letter, not a mark:
 /// "وٰ" is pronounced as a long "a" (الصلوة = الصلاة), a bare dagger alef
@@ -43,62 +51,6 @@ String _searchExpr(String normed) {
   return groups.join(' AND ');
 }
 
-class Surah {
-  final int id, ayahCount, juzStart;
-  final String nameAr, nameShort, nameEn, revelation;
-  const Surah(this.id, this.nameAr, this.nameShort, this.nameEn, this.revelation,
-      this.ayahCount, this.juzStart);
-}
-
-class Ayah {
-  final int id, surah, ayah, juz, hizb, quarter, page;
-  final bool sajda;
-  final String text, surahName;
-  const Ayah(this.id, this.surah, this.ayah, this.text, this.juz, this.hizb,
-      this.quarter, this.page, this.sajda, this.surahName);
-}
-
-class Ijaz {
-  final int id, surah, ayah;
-  final String title, ayahRef, text, source;
-  const Ijaz(this.id, this.title, this.ayahRef, this.surah, this.ayah, this.text, this.source);
-}
-
-/// A reciter whose per-ayah MP3s are served by EveryAyah (folder verified
-/// 2026-11-23 in https://everyayah.com/data/recitations.js).
-/// [folder] is the EveryAyah subfolder; [fallbackEdition] is the
-/// cdn.islamic.network edition used when EveryAyah fails.
-class Reciter {
-  final String id, nameAr, folder;
-  final String? fallbackEdition;
-  const Reciter(this.id, this.nameAr, this.folder, [this.fallbackEdition]);
-}
-
-const reciters = [
-  Reciter('afasy', 'مشاري راشد العفاسي', 'Alafasy_64kbps', 'ar.alafasy'),
-  Reciter('husary', 'محمود خليل الحصري', 'Husary_64kbps', 'ar.husary'),
-  Reciter('basit', 'عبد الباسط عبد الصمد', 'Abdul_Basit_Murattal_64kbps', 'ar.abdulbasitmurattal'),
-  Reciter('minshawi', 'محمد صديق المنشاوي', 'Minshawy_Murattal_128kbps', 'ar.minshawi'),
-  Reciter('sudais', 'عبد الرحمن السديس', 'Abdurrahmaan_As-Sudais_64kbps', 'ar.abdulrahmanalsudais'),
-  Reciter('muaiqly', 'ماهر المعيقلي', 'Maher_AlMuaiqly_64kbps', 'ar.maheralmuaiqly'),
-  Reciter('shuraym', 'سعود الشريم', 'Saood_ash-Shuraym_64kbps', 'ar.saoodashshuraym'),
-];
-
-/// Offline tafsirs bundled in the app.
-const offlineTafsirs = [
-  ('muyassar', 'التفسير الميسر'),
-  ('jalalayn', 'تفسير الجلالين'),
-  ('saadi', 'تفسير السعدي'),
-];
-
-/// Big tafsirs fetched per ayah from Quran.com API v4 (online only, cached).
-/// IDs verified 2026-11-23 against https://api.quran.com/api/v4/resources/tafsirs.
-const onlineTafsirs = [
-  (14, 'تفسير ابن كثير'),
-  (15, 'تفسير الطبري'),
-  (90, 'تفسير القرطبي'),
-];
-
 const _cols =
     'a.id AS id, a.surah AS surah, a.ayah AS ayah, a.text AS text, a.juz AS juz, '
     'a.hizb AS hizb, a.quarter AS quarter, a.page AS page, a.sajda AS sajda, '
@@ -124,7 +76,9 @@ List<Ayah> _searchSync(String p, String q) {
     final n = normalizeAr(q);
     if (n.isEmpty) return [];
     ResultSet rs;
-    final ref = RegExp(r'^(\d{1,3})\s*:\s*(\d{1,3})$').firstMatch(n);
+    // المرجع المباشر (مثل 2:255) يُطابَق على الاستعلام الخام قبل التطبيع،
+    // لأن normalizeAr() يستبدل ':' بمسافة فيُبطل التعابير عليه بعدها.
+    final ref = RegExp(r'^(\d{1,3})\s*:\s*(\d{1,3})$').firstMatch(q.trim());
     if (ref != null) {
       // "2:255" -> the exact ayah
       rs = db.select('SELECT $_cols FROM ayahs a $_join WHERE a.surah=? AND a.ayah=?',
@@ -143,6 +97,90 @@ List<Ayah> _searchSync(String p, String q) {
 }
 
 Future<String> _sha(String p) async => (await sha256.bind(File(p).openRead()).first).toString();
+
+/// بحث معجمي (FTS3 — Lexicon) في القرآن أو التفسير: يطابق قاعدة الحدّ
+/// لا الرمز المجرّد عشوائياً، فيحلّ مشكلتي البحث القديم — البوادئ
+/// (بصابرين كان 0) والإيجابيات الكاذبة (كانت←انت، بسم←سم، كتابا←تابا).
+/// الخوارزمية حرفياً من fts3_test.py (التشغيل 5: 41 استعلاماً،
+/// missing=0 على قاعدة الـ6,236 آية كاملة):
+///   1) قاعدة كل حدّ من جداول المعجم (وإلا fallback)؛
+///   2) المرشحون من FTS5 بتعبير buildMatchExpression
+///      (variants(الحدّ) ∪ variants(قاعدته) + التوسيع المعجمي)؛
+///   3) مرشح لاحق على الرموز الأصلية المُعاد بناؤها من عمود FTS نفسه
+///      (مع إنقاذ السلسلة + رموز lexicon_extra الممتصة).
+/// يُرجع الآيات مرتبة برقمها. يرمي StateError إن كانت جداول المعجم
+/// غائبة من المكتبة المثبتة (مكتبة قديمة قبل التحديث) — لا يعود
+/// صامتاً إلى البحث القديم لأن الأعداد ستختلف.
+/// ملاحظة أداء: تُحمَّل جداول المعجم داخل هذه الدعوة (العزل يمنع
+/// مشاركة كائن الباني)؛ قياس الزمن على الجهاز (S22 Ultra) لم يُجرَ
+/// بعد — نطاق التفسير في بايثون 11–1180ms (انظر LEXICON_RESULTS.md §7).
+List<Ayah> _searchLexiconSync(String p, String q, {bool tafsir = false}) {
+  final db = sqlite3.open(p, mode: OpenMode.readOnly);
+  try {
+    final n = normalizeAr(q);
+    if (n.isEmpty) return [];
+    // المرجع المباشر (مثل 2:255) يُطابَق على الاستعلام الخام قبل التطبيع،
+    // لأن normalizeAr() يستبدل ':' بمسافة فيُبطل التعابير عليه بعدها.
+    final ref = RegExp(r'^(\d{1,3})\s*:\s*(\d{1,3})$').firstMatch(q.trim());
+    if (ref != null) {
+      // "2:255" -> the exact ayah (same as _searchSync)
+      final rs = db.select('SELECT $_cols FROM ayahs a $_join WHERE a.surah=? AND a.ayah=?',
+          [int.parse(ref.group(1)!), int.parse(ref.group(2)!)]);
+      return rs.map(_a).toList();
+    }
+    final hasLex = (db
+            .select("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' "
+                "AND name IN ('lexicon','lexicon_tafsir','lexicon_extra','lexicon_meta')")
+            .first['c'] as int) ==
+        4;
+    if (!hasLex) {
+      throw StateError(
+          'جداول المعجم غائبة من المكتبة المثبتة — حدّث المكتبة (أعد التثبيت من هذا الإصدار)');
+    }
+    final scope = tafsir ? LexiconScope.tafsir : LexiconScope.quran;
+    final builder = LexiconQueryBuilder(
+      lexiconQuran: {
+        for (final r in db.select('SELECT surface, base FROM lexicon'))
+          r['surface'] as String: r['base'] as String,
+      },
+      lexiconTafsir: {
+        for (final r in db.select('SELECT surface, base FROM lexicon_tafsir'))
+          r['surface'] as String: r['base'] as String,
+      },
+    );
+    final terms = n.split(' ').where((t) => t.isNotEmpty).toList();
+    final bqs = builder.queryBases(terms, scope);
+    final expr = builder.buildMatchExpression(terms, scope);
+    final candRows = db.select(
+        'SELECT rowid FROM ayahs_fts WHERE ayahs_fts MATCH ?', [expr]);
+    if (candRows.isEmpty) return [];
+    final ids = [for (final r in candRows) r['rowid'] as int];
+    final ph = List.filled(ids.length, '?').join(',');
+    final origRows = db.select(
+        'SELECT rowid, norm, tafsir FROM ayahs_fts WHERE rowid IN ($ph)', ids);
+    final extra = <int, List<String>>{};
+    for (final r in db.select('SELECT ayah_id, token FROM lexicon_extra')) {
+      (extra[r['ayah_id'] as int] ??= []).add(r['token'] as String);
+    }
+    final col = tafsir ? 'tafsir' : 'norm';
+    final matched = <int>[];
+    for (final r in origRows) {
+      final gid = r['rowid'] as int;
+      final originals = LexiconQueryBuilder.reconstructOriginals(
+          (r[col] as String?) ?? '');
+      originals.addAll(extra[gid] ?? const []);
+      if (builder.ayahMatches(originals, bqs, scope)) matched.add(gid);
+    }
+    if (matched.isEmpty) return [];
+    final mph = List.filled(matched.length, '?').join(',');
+    final rs = db.select(
+        'SELECT $_cols FROM ayahs a $_join WHERE a.id IN ($mph) ORDER BY a.id',
+        matched);
+    return rs.map(_a).toList();
+  } finally {
+    db.dispose();
+  }
+}
 
 String _quick(String p) {
   final db = sqlite3.open(p, mode: OpenMode.readOnly);
@@ -461,6 +499,24 @@ class Repo {
       .map(_a)
       .toList();
 
+  /// Ayahs of one Madinah mushaf page (1..604), in mushaf order.
+  /// A page always ends at an ayah boundary, so every ayah belongs to
+  /// exactly one page (ayahs.page) and pages are monotonic in ayah id.
+  List<Ayah> ayahsOfPage(int page) => db
+      .select('SELECT $_cols FROM ayahs a $_join WHERE a.page=? ORDER BY a.id', [page])
+      .map(_a)
+      .toList();
+
+  /// First page of a surah (the page of its ayah 1).
+  int surahStartPage(int surah) => db
+      .select('SELECT MIN(page) AS p FROM ayahs WHERE surah=?', [surah])
+      .first['p'] as int;
+
+  /// First page of a juz (1..30).
+  int juzStartPage(int juz) => db
+      .select('SELECT MIN(page) AS p FROM ayahs WHERE juz=?', [juz])
+      .first['p'] as int;
+
   /// Tafsir texts of one ayah, keyed by source id.
   Map<String, String> tafsirOf(int surah, int ayah) {
     final rs = db.select(
@@ -545,5 +601,48 @@ class Repo {
   Future<List<Ayah>> search(String q) async {
     final p = await path();
     return Isolate.run(() => _searchSync(p, q));
+  }
+
+  /// بحث معجمي (FTS3 — Lexicon) في القرآن (أو في التفسير إن
+  /// tafsir=true): يطابق قاعدة الحدّ لا الرمز المجرّد عشوائياً.
+  /// أمثلة موثقة (41 استعلاماً، missing=0): بالصلاة 63، فالغيب 48،
+  /// للصابرين 15، والمؤمنين 142، بصابرين 15 (كان 0 في القديم)،
+  /// وكانت/بسم/كتابا لا تظهر في نتائج انت/سم/تابا. يرمي StateError
+  /// إن غابت جداول المعجم من المكتبة المثبتة.
+  Future<List<Ayah>> searchLexicon(String q, {bool tafsir = false}) async {
+    final p = await path();
+    return Isolate.run(() => _searchLexiconSync(p, q, tafsir: tafsir));
+  }
+
+  /// true إذا كانت جداول المعجم موجودة في المكتبة المثبتة.
+  Future<bool> lexiconAvailable() async {
+    final f = File(await path());
+    if (!f.existsSync()) return false;
+    final db = sqlite3.open(f.path, mode: OpenMode.readOnly);
+    try {
+      return (db
+              .select("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' "
+                  "AND name IN ('lexicon','lexicon_tafsir','lexicon_extra','lexicon_meta')")
+              .first['c'] as int) ==
+          4;
+    } catch (_) {
+      return false;
+    } finally {
+      db.dispose();
+    }
+  }
+
+  /// بيانات provenance الخاصة بالمعجم (lexicon_meta) من المكتبة
+  /// المفتوحة، أو {} إن غابت الجداول — ومنها 'license_note'
+  /// (إسناد QAC وحالة التأكيد القانوني) لشاشة «حول التطبيق».
+  Map<String, String> lexiconMeta() {
+    try {
+      return {
+        for (final r in db.select('SELECT key,value FROM lexicon_meta'))
+          r['key'] as String: r['value'] as String,
+      };
+    } catch (_) {
+      return {};
+    }
   }
 }

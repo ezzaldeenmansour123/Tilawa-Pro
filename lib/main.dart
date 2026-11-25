@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -15,22 +14,20 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'db.dart';
+import 'core/theme.dart'; // Phase 1: الألوان + buildTheme + الرسامون/الأفاتارات
+import 'tajweed.dart'; // Phase 1: فهرس أحكام التجويد + نموذج البيانات (بلا تلوين مدمج)
+import 'data/user_export.dart'; // Pro: نموذج تصدير/استيراد بيانات المستخدم
+import 'data/user_export_io.dart'; // Pro: خدمة التصدير/الاستيراد (ملفات + prefs)
+import 'features/memorization/hifz_store.dart'; // Pro: خطط الحفظ والتكرار المتباعد (تقييم ذاتي، بلا تصحيح آلي)
+import 'features/memorization/hifz_page.dart';
+import 'features/packages/packages_page.dart'; // Pro: صفحة الحزم والتنزيلات
+import 'features/data/export_page.dart'; // Pro: صفحة النسخ الاحتياطي والاستعادة
+import 'features/recitation/model_manager.dart'; // Pro: التسميع الذكي — تنزيل النموذج والتحقق منه
+import 'features/recitation/progress_store.dart'; // Pro: التسميع الذكي — حفظ التقدم
+import 'features/recitation/webview_engine.dart'; // Pro: التسميع الذكي — محرك WebView
+import 'features/recitation/screens/recitation_screen.dart'; // Pro: التسميع الذكي — شاشة الإعداد والبدء
+import 'package:file_picker/file_picker.dart'; // Pro: اختيار ملف تصدير للاستيراد
 
-// ───────── الألوان الرسمية — لوحة باستيل من التصميم ─────────
-const teal = Color(0xFF0E7C6B); // أخضر عميق (لمسات)
-const tealLight = Color(0xFFDFF0EC);
-const sky = Color(0xFF4E9BC4); // أزرق سماوي
-const skyLight = Color(0xFFE4F1F9);
-const skyDeep = Color(0xFF2E6E96);
-const pink = Color(0xFFE88AA5); // وردي ناعم
-const pinkLight = Color(0xFFFDE9EE);
-const mint = Color(0xFF6FBF9B); // نعناعي
-const mintLight = Color(0xFFE2F4EB);
-const gold = Color(0xFFC9A227);
-const goldSoft = Color(0xFFE8C468);
-const goldLight = Color(0xFFFFF3CD);
-const cream = Color(0xFFF6FAFC); // خلفية فاتحة بلون سماوي شاحب
-const ink = Color(0xFF1F2E2A);
 
 final navKey = GlobalKey<NavigatorState>();
 
@@ -115,6 +112,9 @@ class UserData extends ChangeNotifier {
   int khatmahQuarter = 1; // الربع الحالي في الختمة (1..240)
   bool warshReady = false;
   List<String> favReciters = []; // القرّاء المفضلون (معرّفاتهم)
+  // آخر موضع قراءة (Phase 1): رقم السورة + المعرّف العام للآية + صفحة المصحف.
+  // تُحفظ عند فتح آية أو تغيير صفحة المصحف، وتُستعاد من الرئيسية.
+  int? lastReadSurah, lastReadAyahId, lastReadPage;
 
   Map<int, String> _readMap(String k) {
     final m = jsonDecode(p.getString(k) ?? '{}') as Map<String, dynamic>;
@@ -130,6 +130,9 @@ class UserData extends ChangeNotifier {
     khatmahQuarter = p.getInt('khatmah_q') ?? 1;
     warshReady = p.getBool('warsh_ready') ?? false;
     favReciters = p.getStringList('fav_reciters') ?? [];
+    lastReadSurah = p.getInt('read_surah');
+    lastReadAyahId = p.getInt('read_ayah');
+    lastReadPage = p.getInt('read_page');
   }
 
   void _save() {
@@ -140,7 +143,35 @@ class UserData extends ChangeNotifier {
     p.setInt('khatmah_q', khatmahQuarter);
     p.setBool('warsh_ready', warshReady);
     p.setStringList('fav_reciters', favReciters);
+    if (lastReadSurah == null) {
+      p.remove('read_surah');
+    } else {
+      p.setInt('read_surah', lastReadSurah!);
+    }
+    if (lastReadAyahId == null) {
+      p.remove('read_ayah');
+    } else {
+      p.setInt('read_ayah', lastReadAyahId!);
+    }
+    if (lastReadPage == null) {
+      p.remove('read_page');
+    } else {
+      p.setInt('read_page', lastReadPage!);
+    }
     notifyListeners();
+  }
+
+  bool get hasReadingPosition =>
+      lastReadSurah != null && lastReadAyahId != null && lastReadPage != null;
+
+  /// حفظ آخر موضع قراءة (سورة/آية/صفحة مصحف) — يُستدعى عند فتح آية
+  /// أو عند تغيير صفحة المصحف. المفاتيح جديدة (read_surah/read_ayah/
+  /// read_page) ولا تمسّ أي مفتاح موجود.
+  void saveReadingPosition({required int surah, required int ayahId, required int page}) {
+    lastReadSurah = surah;
+    lastReadAyahId = ayahId;
+    lastReadPage = page;
+    _save();
   }
 
   bool hasReciter(String id) => favReciters.contains(id);
@@ -204,6 +235,14 @@ class UserData extends ChangeNotifier {
 
 final settings = AppSettings();
 final user = UserData();
+final hifz = HifzStore(); // Pro: خطط الحفظ (مفاتيح hifz_* منفصلة تماماً)
+
+// Pro: التسميع الذكي (محرك yazinsai/tilawa في WebView) — يُهيَّأ في main().
+// إن فشلت التهيئة يبقى recitationReady=false ولا يمنع التطبيق من العمل.
+late final ModelManager recitationModelManager;
+late final WebViewEngine recitationEngine;
+late final ProgressStore recitationProgress;
+bool recitationReady = false;
 
 // ───────── الإشعارات المحلية (تذكير الورد) ─────────
 class NotificationService {
@@ -331,12 +370,16 @@ class AudioService extends ChangeNotifier {
       playlist = [a];
       currentAyahId = a.id;
       await player.setAudioSource(await _sourceFor(a, r));
+      await player.setSpeed(speed);
+      await player.setLoopMode(repeatMode);
       await player.play();
     } catch (_) {
       // المحاولة الثانية: المصدر الاحتياطي
       try {
         await player.setAudioSource(
             AudioSource.uri(Uri.parse(fallbackUrl(r, a.id))));
+        await player.setSpeed(speed);
+        await player.setLoopMode(repeatMode);
         await player.play();
       } catch (e) {
         error = 'تعذّر تشغيل الصوت — تحقق من الإنترنت.';
@@ -362,6 +405,8 @@ class AudioService extends ChangeNotifier {
         sources.add(await _sourceFor(a, r));
       }
       await player.setAudioSources(sources, initialIndex: start < 0 ? 0 : start);
+      await player.setSpeed(speed);
+      await player.setLoopMode(repeatMode);
       await player.play();
     } catch (_) {
       error = 'تعذّر تشغيل التلاوة — تحقق من الإنترنت.';
@@ -392,10 +437,86 @@ class AudioService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _sleepTimer?.cancel();
+    _sleepTicker?.cancel();
+    sleepEndsAt = null;
     await player.stop();
     currentAyahId = null;
     playlist = [];
     notifyListeners();
+  }
+
+  // ── سرعة التشغيل والتكرار ومؤقت النوم (Pro) ──
+  // السرعة والتكرار خاصيتان في just_audio تبقيان على المشغّل عبر المصادر،
+  // لكن تُطبَّق صراحةً بعد كل setAudioSource تحسّباً.
+  double speed = 1.0;
+  LoopMode repeatMode = LoopMode.off;
+  DateTime? sleepEndsAt;
+  Timer? _sleepTimer;
+  Timer? _sleepTicker;
+
+  static const List<double> speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
+
+  String get speedLabel => speed == 1.0 ? '1×' : '$speed×';
+
+  String get repeatLabel => repeatMode == LoopMode.one
+      ? 'تكرار الآية'
+      : repeatMode == LoopMode.all
+          ? 'تكرار السورة'
+          : 'بلا تكرار';
+
+  Future<void> cycleSpeed() async {
+    final i = speeds.indexOf(speed);
+    final next = speeds[(i + 1) % speeds.length];
+    speed = next;
+    try {
+      await player.setSpeed(next);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> cycleRepeat() async {
+    repeatMode = repeatMode == LoopMode.off
+        ? LoopMode.one
+        : repeatMode == LoopMode.one
+            ? LoopMode.all
+            : LoopMode.off;
+    try {
+      await player.setLoopMode(repeatMode);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// مؤقت نوم: يوقف التلاوة بعد [d]، أو يلغي المؤقت إن كان null.
+  void setSleepTimer(Duration? d) {
+    _sleepTimer?.cancel();
+    _sleepTicker?.cancel();
+    if (d == null) {
+      sleepEndsAt = null;
+      notifyListeners();
+      return;
+    }
+    sleepEndsAt = DateTime.now().add(d);
+    _sleepTimer = Timer(d, () async {
+      sleepEndsAt = null;
+      // إيقاف مؤقت (pause) لا إيقاف كامل: يبقى موضع التلاوة قابلاً للاستئناف.
+      await player.pause();
+      notifyListeners();
+    });
+    // تحديث العد التنازلي المعروض كل 30 ثانية.
+    _sleepTicker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (sleepEndsAt == null) return;
+      if (DateTime.now().isAfter(sleepEndsAt!)) return;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  int get sleepMinutesLeft {
+    final end = sleepEndsAt;
+    if (end == null) return 0;
+    final m = end.difference(DateTime.now()).inMinutes;
+    return m < 0 ? 0 : m;
   }
 
   Future<bool> isSurahDownloaded(int surahId) async {
@@ -502,43 +623,22 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await settings.load();
   await user.load();
+  await hifz.load();
+  // Pro: التسميع الذكي — التهيئة محمية: أي فشل هنا (مثلاً لا مجلد دعم)
+  // يجعل التسميع غير متاح فقط، ولا يمنع التطبيق من العمل إطلاقاً.
+  try {
+    recitationModelManager = await ModelManager.create();
+    recitationEngine = WebViewEngine(modelManager: recitationModelManager);
+    recitationProgress = await ProgressStore.create();
+    await recitationProgress.load();
+    recitationReady = true;
+  } catch (_) {
+    recitationReady = false;
+  }
   await NotificationService.init();
   runApp(const TilawaApp());
 }
 
-ThemeData buildTheme(bool dark) {
-  final scheme = dark
-      ? const ColorScheme.dark(
-          primary: sky,
-          secondary: goldSoft,
-          surface: Color(0xFF1C2B33),
-          onSurface: Color(0xFFEAF3F0))
-      : const ColorScheme.light(
-          primary: sky, secondary: gold, surface: Colors.white, onSurface: ink);
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: scheme,
-    scaffoldBackgroundColor: dark ? const Color(0xFF101D24) : cream,
-    appBarTheme: AppBarTheme(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      centerTitle: true,
-      foregroundColor: scheme.onSurface,
-      titleTextStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: scheme.onSurface),
-    ),
-    navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: dark ? const Color(0xFF16242B) : Colors.white,
-      indicatorColor: dark ? const Color(0xFF24455A) : skyLight,
-    ),
-    chipTheme: ChipThemeData(
-      backgroundColor: dark ? const Color(0xFF24455A) : skyLight,
-      selectedColor: sky,
-      labelStyle: TextStyle(color: dark ? Colors.white : skyDeep),
-      secondaryLabelStyle: const TextStyle(color: Colors.white),
-    ),
-  );
-}
 
 /// تنسيق مدة بالشكل 0:45
 String fmtDur(Duration d) {
@@ -631,6 +731,74 @@ Widget ayahCard(BuildContext c, Ayah a) => softCard(
       ]),
     );
 
+/// تحويل رقم إلى أرقام عربية مشرقية (١٢٣) لعرض رقم الآية داخل النص.
+/// هذه زخرفة واجهة فقط وليست جزءًا من نص الآية.
+String _arDigits(int n) =>
+    n.toString().split('').map((d) => '٠١٢٣٤٥٦٧٨٩'[int.parse(d)]).join();
+
+/// ورقة إجراءات الآية المحددة (ضغطة مطوّلة في القارئ أو المصحف):
+/// نسخ، مشاركة، عرض التفسير من قاعدة البيانات، مفضلة، استماع.
+/// نص الآية يُنسخ/يُشارك حرفيًا كما هو في قاعدة البيانات دون تعديل.
+Future<void> showAyahActions(BuildContext c, Ayah a) async {
+  final isFav = user.has(a.id);
+  final choice = await showModalBottomSheet<String>(
+    context: c,
+    builder: (ctx) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+          leading: const Icon(Icons.menu_book_rounded, color: teal),
+          title: Text('سورة ${a.surahName} • آية ${a.ayah}'),
+          subtitle: Text(a.text,
+              maxLines: 2, overflow: TextOverflow.ellipsis, style: quranStyle(15, h: 1.8)),
+        ),
+        const Divider(height: 1),
+        ListTile(
+            leading: const Icon(Icons.copy_rounded),
+            title: const Text('نسخ الآية'),
+            onTap: () => Navigator.pop(ctx, 'copy')),
+        ListTile(
+            leading: const Icon(Icons.share_rounded),
+            title: const Text('مشاركة الآية'),
+            onTap: () => Navigator.pop(ctx, 'share')),
+        ListTile(
+            leading: const Icon(Icons.auto_stories_rounded),
+            title: const Text('عرض التفسير'),
+            subtitle: const Text('الميسر، الجلالين، السعدي — من قاعدة البيانات دون إنترنت'),
+            onTap: () => Navigator.pop(ctx, 'tafsir')),
+        ListTile(
+            leading: Icon(isFav ? Icons.star_rounded : Icons.star_border_rounded, color: gold),
+            title: Text(isFav ? 'إزالة من المفضلة' : 'حفظ في المفضلة'),
+            onTap: () => Navigator.pop(ctx, 'fav')),
+        ListTile(
+            leading: const Icon(Icons.play_arrow_rounded),
+            title: const Text('استماع للآية'),
+            onTap: () => Navigator.pop(ctx, 'play')),
+      ]),
+    ),
+  );
+  if (choice == null) return;
+  switch (choice) {
+    case 'copy':
+      await Clipboard.setData(ClipboardData(text: a.text));
+      if (c.mounted) {
+        ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('تم نسخ الآية')));
+      }
+    case 'share':
+      await Share.share('﴿${a.text}﴾\nسورة ${a.surahName} — آية ${a.ayah}');
+    case 'tafsir':
+      if (c.mounted) {
+        Navigator.push(c, MaterialPageRoute(builder: (_) => AyahDetailPage(a.id)));
+      }
+    case 'fav':
+      user.toggle(a.id);
+    case 'play':
+      await audio.playAyah(a);
+      if (audio.error != null && c.mounted) {
+        ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(audio.error!)));
+      }
+  }
+}
+
 Widget emptyState(IconData icon, String text, {String? button, VoidCallback? onTap}) => Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -646,201 +814,6 @@ Widget emptyState(IconData icon, String text, {String? button, VoidCallback? onT
       ),
     );
 
-class LogoMark extends StatelessWidget {
-  final double size;
-  const LogoMark(this.size, {super.key});
-  @override
-  Widget build(BuildContext context) =>
-      CustomPaint(size: Size(size, size), painter: _LogoPainter());
-}
-
-class _LogoPainter extends CustomPainter {
-  Path _poly(List<List<double>> pts) {
-    final p = Path();
-    for (var i = 0; i < pts.length; i++) {
-      i == 0 ? p.moveTo(pts[i][0], pts[i][1]) : p.lineTo(pts[i][0], pts[i][1]);
-    }
-    return p..close();
-  }
-
-  @override
-  void paint(Canvas c, Size s) {
-    c.scale(s.width / 100);
-    // هلال ذهبي أعلى اليسار
-    final crescent = Path()
-      ..fillType = PathFillType.evenOdd
-      ..addOval(const Rect.fromLTWH(8, 6, 17, 17))
-      ..addOval(const Rect.fromLTWH(12, 4, 17, 17));
-    c.drawPath(crescent, Paint()..color = gold);
-    // فانوس معلّق أعلى الوسط
-    c.drawLine(const Offset(50, 2), const Offset(50, 10),
-        Paint()..color = gold..strokeWidth = 1.5);
-    c.drawRRect(
-        RRect.fromRectAndRadius(const Rect.fromLTWH(43, 10, 14, 16), const Radius.circular(4)),
-        Paint()..color = goldSoft);
-    c.drawRRect(
-        RRect.fromRectAndRadius(const Rect.fromLTWH(46.5, 14, 7, 8), const Radius.circular(2)),
-        Paint()..color = const Color(0xFFFFF3CD));
-    c.drawLine(const Offset(50, 26), const Offset(50, 30),
-        Paint()..color = gold..strokeWidth = 1.5);
-    c.drawCircle(const Offset(50, 32), 1.6, Paint()..color = gold);
-    // مصحف مفتوح
-    const left = [[50.0, 70.0], [12.0, 60.0], [10.0, 40.0], [50.0, 50.0]];
-    const right = [[50.0, 70.0], [88.0, 60.0], [90.0, 40.0], [50.0, 50.0]];
-    c.drawPath(_poly(left), Paint()..color = teal);
-    c.drawPath(_poly(right), Paint()..color = const Color(0xFF4DB3A2));
-    c.drawLine(const Offset(50, 50), const Offset(50, 70),
-        Paint()..color = Colors.white.withValues(alpha: 0.7)..strokeWidth = 1.5);
-    // كرسي المصحف (رحل): عارضتان خشبيتان متقاطعتان
-    final wood = Paint()
-      ..color = const Color(0xFF8B5E34)
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round;
-    c.drawLine(const Offset(30, 74), const Offset(70, 94), wood);
-    c.drawLine(const Offset(70, 74), const Offset(30, 94), wood);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
-}
-
-// ───────── زخارف التصميم: أزهار وأطر مزخرفة ─────────
-class _FloralPainter extends CustomPainter {
-  final bool flip;
-  const _FloralPainter({this.flip = false});
-
-  void _leaf(Canvas c, double x, double y, double angle, Paint p) {
-    c.save();
-    c.translate(x, y);
-    c.rotate(angle);
-    c.drawOval(const Rect.fromLTWH(-14, -5, 28, 10), p);
-    c.restore();
-  }
-
-  void _flower(Canvas c, double cx, double cy, double r, Paint petal, Paint center) {
-    for (var i = 0; i < 5; i++) {
-      final a = i * 1.2566;
-      c.drawCircle(
-          Offset(cx + math.cos(a) * r * 0.75, cy + math.sin(a) * r * 0.75), r * 0.62, petal);
-    }
-    c.drawCircle(Offset(cx, cy), r * 0.45, center);
-  }
-
-  @override
-  void paint(Canvas c, Size s) {
-    if (flip) {
-      c.translate(s.width, 0);
-      c.scale(-1, 1);
-    }
-    final petal = Paint()..color = pink.withValues(alpha: 0.85);
-    final petalDeep = Paint()..color = const Color(0xFFD96A8B).withValues(alpha: 0.85);
-    final leaf = Paint()..color = mint.withValues(alpha: 0.8);
-    final center = Paint()..color = goldSoft;
-    final stem = Path()
-      ..moveTo(s.width * 0.08, s.height)
-      ..quadraticBezierTo(
-          s.width * 0.4, s.height * 0.5, s.width * 0.85, s.height * 0.12);
-    c.drawPath(
-        stem, Paint()..color = mint..style = PaintingStyle.stroke..strokeWidth = 2.5);
-    _leaf(c, s.width * 0.35, s.height * 0.62, -0.6, leaf);
-    _leaf(c, s.width * 0.55, s.height * 0.38, 0.7, leaf);
-    _flower(c, s.width * 0.86, s.height * 0.12, 13, petal, center);
-    _flower(c, s.width * 0.56, s.height * 0.28, 10, petal, center);
-    _flower(c, s.width * 0.3, s.height * 0.55, 8, petalDeep, center);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
-}
-
-/// زخرفة زهرية توضع في زاوية بطاقة (داخل Stack).
-class FloralCorner extends StatelessWidget {
-  final double size;
-  final bool flip;
-  const FloralCorner({this.size = 90, this.flip = false, super.key});
-  @override
-  Widget build(BuildContext context) => IgnorePointer(
-        child: CustomPaint(
-            size: Size(size, size), painter: _FloralPainter(flip: flip)),
-      );
-}
-
-/// إطار مزخرف ذهبي/أخضر على طراز صفحات المصحف.
-class OrnateFrame extends StatelessWidget {
-  final Widget child;
-  const OrnateFrame({required this.child, super.key});
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: gold, width: 2),
-        borderRadius: BorderRadius.circular(18),
-        color: dark ? const Color(0xFF1C2B33) : Colors.white,
-      ),
-      child: Container(
-        margin: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          border: Border.all(color: dark ? mint : teal, width: 1),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Stack(children: [
-          Padding(padding: const EdgeInsets.all(12), child: child),
-          for (final a in [
-            Alignment.topRight,
-            Alignment.topLeft,
-            Alignment.bottomRight,
-            Alignment.bottomLeft,
-          ])
-            Align(
-              alignment: a,
-              child: const Padding(
-                padding: EdgeInsets.all(1),
-                child: Text('✦', style: TextStyle(color: gold, fontSize: 11)),
-              ),
-            ),
-        ]),
-      ),
-    );
-  }
-}
-
-/// صورة رمزية بحرف أول الاسم — تُستخدم للقرّاء بدل صور الأشخاص.
-class MonogramAvatar extends StatelessWidget {
-  final String name;
-  final double radius;
-  const MonogramAvatar(this.name, {this.radius = 24, super.key});
-  @override
-  Widget build(BuildContext context) {
-    final letter = name.trim().isEmpty ? '؟' : name.trim()[0];
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: skyLight,
-      child: Text(letter,
-          style: TextStyle(
-              fontSize: radius * 0.85, fontWeight: FontWeight.w800, color: skyDeep)),
-    );
-  }
-}
-
-/// روبوت المساعد الذكي — مرسوم بالأيقونة والتدرج، بلا صور خارجية.
-class RobotAvatar extends StatelessWidget {
-  final double size;
-  const RobotAvatar({this.size = 48, super.key});
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-              colors: [sky, Color(0xFF7FB8D9)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight),
-        ),
-        child: Icon(Icons.smart_toy_rounded, color: Colors.white, size: size * 0.55),
-      );
-}
 
 // ───────── فضل السور — قائمة منقولة موثقة المصدر ─────────
 /// فضائل سور من أحاديث مشهورة موثقة المصدر.
@@ -1087,6 +1060,9 @@ class MorePage extends StatelessWidget {
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RecitationsPage()))),
         _row(context, Icons.auto_stories_rounded, 'التفسير', 'تصفح تفسير السور', goldLight, gold,
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TafsirBrowserPage()))),
+        _row(context, Icons.palette_rounded, 'أحكام التجويد', 'مفتاح الألوان — التلوين قيد التحقق',
+            tealLight, teal,
+            () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TajweedPage()))),
         _row(context, Icons.lightbulb_rounded, 'الإعجاز القرآني', '10 مقالات موثقة', goldLight, gold,
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IjazPage()))),
         _row(context, Icons.library_books_rounded, 'القراءات', 'حفص وورش', mintLight, teal,
@@ -1094,6 +1070,23 @@ class MorePage extends StatelessWidget {
         _row(context, Icons.notifications_active_rounded, 'الورد والتذكير', 'ختمتك ووردك اليومي',
             skyLight, sky,
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WirdPage()))),
+        _row(context, Icons.school_rounded, 'خطط الحفظ', 'حفظك ومراجعتك المتباعدة',
+            mintLight, teal,
+            () => Navigator.push(context, MaterialPageRoute(builder: (_) => HifzPage(store: hifz)))),
+        _row(context, Icons.mic_rounded, 'التسميع الذكي', 'سمّع واحفظ مع تصحيح الكلمات — دون إنترنت',
+            mintLight, teal, () {
+          if (recitationReady) {
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => RecitationScreen(
+                        engine: recitationEngine, progressStore: recitationProgress)));
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    'التسميع غير متاح على هذا الجهاز حالياً — أعد تشغيل التطبيق وحاول مجدداً')));
+          }
+        }),
         _row(context, Icons.history_rounded, 'السجل', 'آيات قرأتها مؤخرًا', pinkLight, pink,
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryPage()))),
         _row(context, Icons.library_add_check_rounded, 'المكتبة والمصادر', 'المحتوى والسلامة والتراخيص',
@@ -1115,7 +1108,7 @@ class MorePage extends StatelessWidget {
                     SizedBox(height: 4),
                     Text('رفيقك في رحلتك مع القرآن', style: TextStyle(fontSize: 13, height: 1.7)),
                     SizedBox(height: 2),
-                    Text('الإصدار 1.0.0', style: TextStyle(fontSize: 12, color: gold)),
+                    Text('الإصدار 1.1.0', style: TextStyle(fontSize: 12, color: gold)),
                   ]),
                 ),
               ])),
@@ -1249,7 +1242,11 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final continueAyah = user.history.isEmpty ? null : Repo.i.ayahById(user.history.first);
+    // متابعة القراءة: آخر موضع محفوظ (سورة/آية/صفحة) أولاً، ثم السجل إن لم يوجد.
+    final resumeAyah = user.hasReadingPosition
+        ? Repo.i.ayahById(user.lastReadAyahId!)
+        : (user.history.isEmpty ? null : Repo.i.ayahById(user.history.first));
+    final resumeIsMushaf = user.hasReadingPosition && resumeAyah != null;
     final q = user.khatmahQuarter;
     final done = q > 240;
     final progress = ((q - 1).clamp(0, 240)) / 240;
@@ -1384,22 +1381,30 @@ class _HomePageState extends State<HomePage> {
             const Positioned(bottom: 0, left: 0, child: FloralCorner(size: 56, flip: true)),
           ]),
         ],
-        if (continueAyah != null) ...[
+        if (resumeAyah != null) ...[
           const SizedBox(height: 14),
-          softCard(context, onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => AyahDetailPage(continueAyah.id))), child: Row(children: [
-            const Icon(Icons.history_rounded, color: teal),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('متابعة القراءة', style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text('سورة ${continueAyah.surahName} • آية ${continueAyah.ayah}',
-                    style: const TextStyle(fontSize: 13)),
-              ]),
-            ),
-            const Icon(Icons.chevron_left),
-          ])),
+          softCard(context,
+              onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => resumeIsMushaf
+                          ? MushafPage(initialPage: user.lastReadPage!)
+                          : AyahDetailPage(resumeAyah.id))),
+              child: Row(children: [
+                const Icon(Icons.history_rounded, color: teal),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('متابعة القراءة', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(
+                        'سورة ${resumeAyah.surahName} • آية ${resumeAyah.ayah}'
+                        '${resumeIsMushaf ? ' • صفحة ${user.lastReadPage}' : ''}',
+                        style: const TextStyle(fontSize: 13)),
+                  ]),
+                ),
+                const Icon(Icons.chevron_left),
+              ])),
         ],
         const SizedBox(height: 14),
         softCard(context,
@@ -1442,6 +1447,12 @@ class _HomePageState extends State<HomePage> {
                     MaterialPageRoute(builder: (_) => const RecitationsPage()))),
             _tile(context, Icons.menu_book_rounded, 'القرآن الكريم', mintLight, teal,
                 () => widget.onTab(1)),
+            _tile(context, Icons.auto_stories_rounded, 'المصحف', goldLight, gold,
+                () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            MushafPage(initialPage: user.lastReadPage ?? 1)))),
             _tile(context, Icons.auto_stories_rounded, 'التفسير', goldLight, gold,
                 () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const TafsirBrowserPage()))),
@@ -1541,7 +1552,19 @@ class _SurahsPageState extends State<SurahsPage> {
             return name.contains(n) || digits == _q.trim();
           }).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('سور القرآن الكريم')),
+      appBar: AppBar(
+        title: const Text('سور القرآن الكريم'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_stories_rounded),
+            tooltip: 'المصحف (604 صفحات)',
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => MushafPage(initialPage: user.lastReadPage ?? 1))),
+          ),
+        ],
+      ),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1665,6 +1688,39 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
             tooltip: 'تلاوة السورة كاملة',
             onPressed: () => audio.playSurah(widget.surahId),
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            tooltip: 'خيارات القراءة',
+            onSelected: (v) {
+              switch (v) {
+                case 'font_up':
+                  settings.setFont((settings.fontSize + 2).clamp(18, 36).toDouble());
+                case 'font_down':
+                  settings.setFont((settings.fontSize - 2).clamp(18, 36).toDouble());
+                case 'night':
+                  settings.setMode(
+                      Theme.of(context).brightness == Brightness.dark
+                          ? ThemeMode.light
+                          : ThemeMode.dark);
+                case 'mushaf':
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => MushafPage(
+                              initialPage: Repo.i.surahStartPage(widget.surahId))));
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                  value: 'font_up',
+                  child: Text('تكبير الخط (الآن ${settings.fontSize.round()})')),
+              PopupMenuItem(
+                  value: 'font_down',
+                  child: Text('تصغير الخط (الآن ${settings.fontSize.round()})')),
+              const PopupMenuItem(value: 'night', child: Text('الوضع الليلي / الفاتح')),
+              const PopupMenuItem(value: 'mushaf', child: Text('عرض في المصحف')),
+            ],
+          ),
         ],
       ),
       body: Column(children: [
@@ -1723,9 +1779,11 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                       borderRadius: BorderRadius.circular(14),
                       onTap: () {
                         user.touch(a.id);
+                        user.saveReadingPosition(surah: a.surah, ayahId: a.id, page: a.page);
                         Navigator.push(c,
                             MaterialPageRoute(builder: (_) => AyahDetailPage(a.id)));
                       },
+                      onLongPress: () => showAyahActions(c, a),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1825,10 +1883,425 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                   ),
                   IconButton(icon: const Icon(Icons.close_rounded), onPressed: audio.stop),
                 ]),
+                // سرعة التشغيل والتكرار ومؤقت النوم (Pro).
+                Row(children: [
+                  TextButton.icon(
+                    onPressed: audio.cycleSpeed,
+                    icon: const Icon(Icons.speed_rounded, size: 18),
+                    label: Text('السرعة ${audio.speedLabel}'),
+                  ),
+                  TextButton.icon(
+                    onPressed: audio.cycleRepeat,
+                    icon: Icon(
+                      audio.repeatMode == LoopMode.one
+                          ? Icons.repeat_one_rounded
+                          : Icons.repeat_rounded,
+                      size: 18,
+                      color: audio.repeatMode == LoopMode.off ? Colors.grey : teal,
+                    ),
+                    label: Text(audio.repeatLabel),
+                  ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      final choice = await showModalBottomSheet<Duration?>(
+                        context: c,
+                        builder: (ctx) => SafeArea(
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            const ListTile(
+                                title: Text('مؤقت النوم — إيقاف التلاوة تلقائياً')),
+                            for (final m in [15, 30, 60])
+                              ListTile(
+                                title: Text('بعد $m دقيقة'),
+                                onTap: () =>
+                                    Navigator.pop(ctx, Duration(minutes: m)),
+                              ),
+                            ListTile(
+                              title: const Text('إلغاء المؤقت'),
+                              onTap: () => Navigator.pop(ctx, Duration.zero),
+                            ),
+                          ]),
+                        ),
+                      );
+                      if (choice == null) return;
+                      audio.setSleepTimer(
+                          choice == Duration.zero ? null : choice);
+                    },
+                    icon: Icon(Icons.bedtime_rounded,
+                        size: 18,
+                        color: audio.sleepEndsAt == null ? Colors.grey : teal),
+                    label: Text(audio.sleepEndsAt == null
+                        ? 'مؤقت النوم'
+                        : 'ينتهي خلال ~${audio.sleepMinutesLeft} د'),
+                  ),
+                ]),
               ]),
             );
           },
         ),
+      ]),
+    );
+  }
+}
+
+// ───────── المصحف: 604 صفحات بتخطيط نصي من قاعدة البيانات ─────────
+// وضع الصفحات نصي بالكامل: لا صور مصحف في APK إطلاقًا. كل صفحة تُبنى
+// من ayahs.page (1..604) في قاعدة البيانات، والنص يُعرض حرفيًا من
+// Ayah.text دون أي تعديل. عنوان السورة والبسملة: البسملة مأخوذة حرفيًا
+// من نص آية 1:1 في القاعدة (Repo.i.ayahById(1)) وليست مكتوبة يدويًا،
+// وتُعرض فقط عند بداية سورة (عدا الفاتحة — فآيتها الأولى هي البسملة
+// نفسها — وعدا التوبة التي لا بسملة لها).
+class MushafPage extends StatefulWidget {
+  final int initialPage;
+  const MushafPage({this.initialPage = 1, super.key});
+  @override
+  State<MushafPage> createState() => _MushafPageState();
+}
+
+class _MushafPageState extends State<MushafPage> {
+  late final PageController _ctl;
+  late int _page;
+  late List<Ayah> _ayahs;
+  String? _basmala;
+
+  @override
+  void initState() {
+    super.initState();
+    _page = widget.initialPage.clamp(1, 604).toInt();
+    _ctl = PageController(initialPage: _page - 1);
+    _ayahs = Repo.i.ayahsOfPage(_page);
+    _basmala = Repo.i.ayahById(1)?.text;
+    _savePosition();
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _savePosition() {
+    if (_ayahs.isEmpty) return;
+    final first = _ayahs.first;
+    user.saveReadingPosition(surah: first.surah, ayahId: first.id, page: _page);
+  }
+
+  void _goTo(int page) {
+    final p = page.clamp(1, 604).toInt();
+    _ctl.animateToPage(p - 1,
+        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+  }
+
+  Future<void> _jumpDialog() async {
+    final pageCtl = TextEditingController(text: '$_page');
+    int? surahId;
+    int? juz;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (_, setD) => AlertDialog(
+          title: const Text('الانتقال في المصحف'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: pageCtl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'رقم الصفحة (1–604)'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButton<int>(
+              value: surahId,
+              hint: const Text('أو اختر سورة'),
+              isExpanded: true,
+              items: [
+                for (final s in Repo.i.surahs())
+                  DropdownMenuItem(value: s.id, child: Text('سورة ${s.nameAr}')),
+              ],
+              onChanged: (v) => setD(() => surahId = v),
+            ),
+            const SizedBox(height: 8),
+            DropdownButton<int>(
+              value: juz,
+              hint: const Text('أو اختر جزءًا'),
+              isExpanded: true,
+              items: [
+                for (var j = 1; j <= 30; j++)
+                  DropdownMenuItem(value: j, child: Text('الجزء $j')),
+              ],
+              onChanged: (v) => setD(() => juz = v),
+            ),
+            const SizedBox(height: 8),
+            const Text('إن اخترت سورة أو جزءًا فهو يقدَّم على رقم الصفحة.',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('انتقال')),
+          ],
+        ),
+      ),
+    );
+    final pageText = pageCtl.text.trim();
+    pageCtl.dispose();
+    if (go != true || !mounted) return;
+    if (surahId != null) {
+      _goTo(Repo.i.surahStartPage(surahId!));
+      return;
+    }
+    if (juz != null) {
+      _goTo(Repo.i.juzStartPage(juz!));
+      return;
+    }
+    final n = int.tryParse(pageText);
+    if (n == null || n < 1 || n > 604) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('رقم الصفحة بين 1 و 604')));
+      return;
+    }
+    _goTo(n);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final first = _ayahs.isEmpty ? null : _ayahs.first;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final surahNames = _ayahs.map((a) => a.surahName).toSet().toList();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('المصحف • صفحة $_page'),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            tooltip: 'خيارات المصحف',
+            onSelected: (v) {
+              switch (v) {
+                case 'font_up':
+                  settings.setFont((settings.fontSize + 2).clamp(18, 36).toDouble());
+                case 'font_down':
+                  settings.setFont((settings.fontSize - 2).clamp(18, 36).toDouble());
+                case 'night':
+                  settings.setMode(dark ? ThemeMode.light : ThemeMode.dark);
+                case 'jump':
+                  _jumpDialog();
+                case 'tajweed':
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const TajweedPage()));
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                  value: 'font_up',
+                  child: Text('تكبير الخط (الآن ${settings.fontSize.round()})')),
+              PopupMenuItem(
+                  value: 'font_down',
+                  child: Text('تصغير الخط (الآن ${settings.fontSize.round()})')),
+              const PopupMenuItem(value: 'night', child: Text('الوضع الليلي / الفاتح')),
+              const PopupMenuItem(value: 'jump', child: Text('الانتقال إلى صفحة / سورة / جزء…')),
+              const PopupMenuItem(value: 'tajweed', child: Text('أحكام التجويد')),
+            ],
+          ),
+        ],
+      ),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Row(children: [
+            if (first != null) ...[
+              Chip(label: Text('الجزء ${first.juz}')),
+              const SizedBox(width: 8),
+              Chip(label: Text('${_ayahs.length} آية')),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(surahNames.join('، '),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+            ],
+          ]),
+        ),
+        Expanded(
+          child: PageView.builder(
+            controller: _ctl,
+            itemCount: 604,
+            onPageChanged: (i) {
+              setState(() {
+                _page = i + 1;
+                _ayahs = Repo.i.ayahsOfPage(_page);
+              });
+              _savePosition();
+            },
+            itemBuilder: (c, i) => _buildPage(c, i + 1),
+          ),
+        ),
+      ]),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+          child: Row(children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_right_rounded),
+              tooltip: 'الصفحة السابقة',
+              onPressed: _page > 1 ? () => _goTo(_page - 1) : null,
+            ),
+            Expanded(
+              child: Text('صفحة $_page من 604',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_left_rounded),
+              tooltip: 'الصفحة التالية',
+              onPressed: _page < 604 ? () => _goTo(_page + 1) : null,
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPage(BuildContext c, int page) {
+    final ayahs = Repo.i.ayahsOfPage(page);
+    if (ayahs.isEmpty) {
+      return emptyState(Icons.menu_book_rounded, 'لا توجد آيات في الصفحة $page.');
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: OrnateFrame(
+        child: ListView.builder(
+          itemCount: ayahs.length,
+          itemBuilder: (c, i) {
+            final a = ayahs[i];
+            final children = <Widget>[];
+            if (a.ayah == 1) {
+              final s = Repo.i.surah(a.surah);
+              if (s != null) children.add(_surahHeader(c, s));
+              // البسملة من نص آية 1:1 في القاعدة حرفيًا — لا تُكتب يدويًا.
+              if (a.surah != 1 && a.surah != 9 && _basmala != null) {
+                children.add(Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text(_basmala!,
+                        textAlign: TextAlign.center, style: quranStyle(settings.fontSize, h: 1.9)),
+                  ),
+                ));
+              }
+            }
+            children.add(_ayahRow(c, a));
+            return Column(children: children);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _surahHeader(BuildContext c, Surah s) {
+    final dark = Theme.of(c).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF24455A) : goldLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: gold.withValues(alpha: 0.5)),
+      ),
+      child: Center(
+        child: Text('سورة ${s.nameAr}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 22, fontWeight: FontWeight.w800, fontFamily: 'Amiri', color: skyDeep)),
+      ),
+    );
+  }
+
+  Widget _ayahRow(BuildContext c, Ayah a) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          user.touch(a.id);
+          user.saveReadingPosition(surah: a.surah, ayahId: a.id, page: a.page);
+          Navigator.push(c, MaterialPageRoute(builder: (_) => AyahDetailPage(a.id)));
+        },
+        onLongPress: () => showAyahActions(c, a),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: a.text, style: quranStyle(settings.fontSize, h: 2.0)),
+              TextSpan(
+                  text: ' ﴿${_arDigits(a.ayah)}﴾',
+                  style: quranStyle(settings.fontSize - 2, h: 2.0, w: FontWeight.w700)
+                      .copyWith(color: gold)),
+              if (a.sajda)
+                TextSpan(
+                    text: ' ۩',
+                    style: quranStyle(settings.fontSize, h: 2.0).copyWith(color: gold)),
+            ]),
+            textAlign: TextAlign.justify,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ───────── أحكام التجويد: مفتاح الألوان وحالة التلوين ─────────
+// التلوين داخل النص غير مفعّل: بيانات cpfair/quran-tajweed مرخّصة
+// CC BY 4.0 لكن إزاحاتها مبنية على نص تنزيل 2017 بينما نص التطبيق
+// تنزيل Uthmani v1.1، ولم يُتحقق من المحاذاة آيةً بآية بعد.
+// هذه الصفحة تعرض الأحكام ومفتاح الألوان والحالة بصراحة، ولا تلوّن
+// أي حرف قبل اكتمال التحقق (tools/verify_tajweed.py).
+class TajweedPage extends StatelessWidget {
+  const TajweedPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('أحكام التجويد')),
+      body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
+        softCard(context,
+            child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.info_rounded, color: skyDeep),
+                SizedBox(width: 8),
+                Text('حالة التلوين',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ]),
+              SizedBox(height: 8),
+              Text(
+                  'التلوين داخل نص المصحف غير مفعّل حالياً — لا يُلوَّن أي حرف قبل اكتمال التحقق من المحاذاة.',
+                  style: TextStyle(fontSize: 14, height: 1.9, fontWeight: FontWeight.w700)),
+              SizedBox(height: 6),
+              Text(
+                  'بيانات الأحكام من مشروع cpfair/quran-tajweed، مرخّصة Creative Commons Attribution 4.0 (CC BY 4.0) وتشمل 18 حكماً لرواية حفص عن عاصم. لكن إزاحاتها (مواضع الأحكام حرفًا بحرف) مبنية على نص تنزيل Uthmani من عام 2017، بينما نص هذا التطبيق هو تنزيل Uthmani v1.1 — وقد ثبت اختلاف بنيوي واحد على الأقل: نص 2017 يُلحق البسملة بأول آية في كل سورة، بينما قاعدة التطبيق لا تفعل. تطبيق الإزاحات دون محاذاة قد يلوّن الحرف الخطأ. لذلك لا تُدمج البيانات قبل أن يمرّ فحص المحاذاة (tools/verify_tajweed.py) على الآيات الـ 6,236 كلها.',
+                  style: TextStyle(fontSize: 13, height: 1.9)),
+            ])),
+        const SizedBox(height: 14),
+        const Text('الأحكام — رواية حفص عن عاصم',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        const Text('الألوان أدناه هي المفتاح المقترح للتلوين عند تفعيله بعد التحقق.',
+            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+        const SizedBox(height: 10),
+        for (final r in tajweedRules)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: softCard(context,
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  CircleAvatar(radius: 12, backgroundColor: Color(r.color)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(r.nameAr,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                      const SizedBox(height: 2),
+                      Text(r.definition, style: const TextStyle(fontSize: 13, height: 1.8)),
+                    ]),
+                  ),
+                ])),
+          ),
+        const SizedBox(height: 6),
+        const Text(tajweedAttribution,
+            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.8)),
       ]),
     );
   }
@@ -1857,6 +2330,7 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
     super.initState();
     _a = Repo.i.ayahById(widget.ayahId)!;
     user.touch(_a.id);
+    user.saveReadingPosition(surah: _a.surah, ayahId: _a.id, page: _a.page);
     _offline = Repo.i.tafsirOf(_a.surah, _a.ayah);
   }
 
@@ -2137,7 +2611,18 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
         searching = false;
       });
     } else {
-      final r = await Repo.i.search(q);
+      // Pro: البحث المعجمي أولاً (41 استعلاماً موثقاً، missing=0)؛
+      // وإن غابت جداول المعجم من المكتبة المثبتة يُعاد إلى البحث القديم.
+      List<Ayah> r;
+      try {
+        if (await Repo.i.lexiconAvailable()) {
+          r = await Repo.i.searchLexicon(q);
+        } else {
+          r = await Repo.i.search(q);
+        }
+      } on StateError {
+        r = await Repo.i.search(q);
+      }
       if (!mounted) return;
       setState(() {
         results = r;
@@ -3725,6 +4210,8 @@ class _LibraryPageState extends State<LibraryPage> {
           _row('التفاسير', 'HuggingFace quranlab/quran-tafsir — الميسر، الجلالين، السعدي (أعمال كلاسيكية في الملك العام)'),
           _row('التفاسير الكبيرة (عند الاتصال)', 'Quran.com API v4 — ابن كثير، الطبري، القرطبي'),
           _row('التلاوة الصوتية', 'EveryAyah.com — تسجيلات مجانية؛ احتياطي: cdn.islamic.network'),
+          _row('بيانات التجويد (غير مضمّنة بعد)',
+              'cpfair/quran-tajweed — CC BY 4.0 — التلوين متوقف حتى اكتمال التحقق من المحاذاة'),
           _row('نص ورش (اختياري)', 'Qur\'anpedia.net عبر quran-json.risanb.com'),
         ])),
         const SizedBox(height: 12),
@@ -3763,6 +4250,141 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  bool _dataBusy = false;
+  String? _dataMsg;
+
+  /// تصدير بيانات المستخدم إلى ملف JSON ومشاركته (للحفظ/الإرسال).
+  /// الكتابة ذرية مع تحقق من البصمة قبل الحفظ (UserExportService).
+  Future<void> _exportData() async {
+    if (_dataBusy) return;
+    setState(() {
+      _dataBusy = true;
+      _dataMsg = null;
+    });
+    try {
+      final svc = await UserExportService.create();
+      final file = await svc.exportToFile(appVersion: '1.1.0+1');
+      await Share.shareXFiles([XFile(file.path)],
+          subject: 'نسخة بيانات تلاوة برو');
+      if (!mounted) return;
+      setState(() => _dataMsg =
+          'تم التصدير: ${file.path.split('/').last} — شاركه أو احفظه في مكان آمن.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _dataMsg = 'فشل التصدير: $e');
+    } finally {
+      if (mounted) setState(() => _dataBusy = false);
+    }
+  }
+
+  /// استيراد بيانات من ملف تصدير JSON: تحقق مسبق (dry-run) ثم حوار
+  /// يعرض الأعداد ويطلب اختيار الدمج (آمن، لا يحذف شيئاً) أو الاستبدال
+  /// (يتطلب تأكيداً ثانياً، وتُكتب نسخة احتياطية تلقائية أولاً).
+  /// ملاحظة: خطط الحفظ (hifz_*) ليست ضمن التصدير بعد — تُصدَّر لاحقاً.
+  Future<void> _importData() async {
+    if (_dataBusy) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked == null || picked.files.single.path == null) return;
+    final file = File(picked.files.single.path!);
+    setState(() {
+      _dataBusy = true;
+      _dataMsg = null;
+    });
+    try {
+      final svc = await UserExportService.create();
+      final preview = await svc.previewImport(file);
+      if (!mounted) return;
+      if (!preview.isValid || preview.data == null) {
+        setState(() {
+          _dataMsg =
+              'رُفض الملف: ${preview.rejectionReason ?? 'غير صالح'} — لم يُكتب شيء.';
+          _dataBusy = false;
+        });
+        return;
+      }
+      final counts = preview.counts;
+      final mode = await showDialog<ImportMode>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('استيراد بيانات'),
+          content: Text(
+              'الملف صالح ويحوي: ${counts['favorites'] ?? 0} مفضلة، '
+              '${counts['history'] ?? 0} في السجل، '
+              '${counts['tags'] ?? 0} وسوم، '
+              '${counts['notes'] ?? 0} ملاحظات، '
+              '${counts['fav_reciters'] ?? 0} قرّاء مفضلين.'
+              '${preview.quarantined.isNotEmpty ? '\nسيُعزل ${preview.quarantined.length} سجلاً فاسداً دون استيراده.' : ''}'
+              '${preview.warnings.isNotEmpty ? '\nتحذير: ${preview.warnings.join(' ')}' : ''}'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('إلغاء')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, ImportMode.merge),
+                child: const Text('دمج (آمن)')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, ImportMode.replace),
+                child: const Text('استبدال الكل')),
+          ],
+        ),
+      );
+      if (mode == null) {
+        if (mounted) setState(() => _dataBusy = false);
+        return;
+      }
+      if (!mounted) return;
+      var confirmReplace = false;
+      if (mode == ImportMode.replace) {
+        confirmReplace = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('استبدال كل بياناتك؟'),
+                content: const Text(
+                    'سيُحذف كل ما لديك الآن (مفضلة، سجل، وسوم، ملاحظات، ختمة) '
+                    'ويُستبدل بمحتوى الملف. تُكتب نسخة احتياطية تلقائية من حالتك '
+                    'الحالية أولاً.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('إلغاء')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('نعم، استبدل')),
+                ],
+              ),
+            ) ??
+            false;
+        if (!confirmReplace) {
+          if (mounted) setState(() => _dataBusy = false);
+          return;
+        }
+      }
+      final report = await svc.importFile(file,
+          mode: mode, confirmReplace: confirmReplace);
+      await user.load();
+      if (!mounted) return;
+      setState(() {
+        _dataBusy = false;
+        _dataMsg = 'تم الاستيراد (${mode == ImportMode.merge ? 'دمج' : 'استبدال'}): '
+            '${report.imported.favorites.length} مفضلة، '
+            '${report.imported.history.length} في السجل، '
+            '${report.imported.tags.length} وسوم، '
+            '${report.imported.notes.length} ملاحظات.'
+            '${report.quarantined.isNotEmpty ? ' عُزل ${report.quarantined.length} سجلاً فاسداً.' : ''}'
+            '${report.backupPath != null ? ' النسخة الاحتياطية: ${report.backupPath!.split('/').last}.' : ''}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _dataMsg = 'فشل الاستيراد: $e';
+        _dataBusy = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3916,6 +4538,13 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => const QiraatPage())),
             ),
             ListTile(
+              leading: const Icon(Icons.download_rounded),
+              title: const Text('الحزم والتنزيلات'),
+              subtitle: const Text('حزم اختيارية تُنزَّل عند الطلب مع إظهار الحجم'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => const PackagesPage())),
+            ),
+            ListTile(
               leading: const Icon(Icons.library_add_check_rounded),
               title: const Text('المكتبة والمصادر'),
               trailing: const Icon(Icons.chevron_left),
@@ -3929,13 +4558,51 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ])),
           const SizedBox(height: 18),
+          const Text('بياناتك', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          softCard(c, padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8), child: Column(children: [
+            ListTile(
+              leading: const Icon(Icons.upload_rounded),
+              title: const Text('تصدير بياناتي'),
+              subtitle: const Text('مفضلة وسجل ووسوم وملاحظات وختمة — ملف JSON تشاركه أو تحفظه'),
+              trailing: _dataBusy
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.chevron_left),
+              onTap: _dataBusy ? null : _exportData,
+            ),
+            ListTile(
+              leading: const Icon(Icons.download_rounded),
+              title: const Text('استيراد بيانات'),
+              subtitle: const Text('من ملف تصدير JSON — دمج آمن أو استبدال مع نسخة احتياطية'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: _dataBusy ? null : _importData,
+            ),
+            ListTile(
+              leading: const Icon(Icons.backup_rounded),
+              title: const Text('نسخ احتياطي واستعادة'),
+              subtitle: const Text('صفحة كاملة: ملفات محفوظة وآخر نسخة احتياطية'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () async {
+                final page = await ExportPage.create(appVersion: '1.1.0+1');
+                if (!c.mounted) return;
+                await Navigator.push(c, MaterialPageRoute(builder: (_) => page));
+                await user.load(); // تحديث بيانات الذاكرة بعد أي استيراد من الصفحة
+              },
+            ),
+            if (_dataMsg != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                child: Text(_dataMsg!, style: const TextStyle(fontSize: 12, height: 1.8)),
+              ),
+          ])),
+          const SizedBox(height: 18),
           Stack(children: [
             softCard(c, child: const Row(children: [
               LogoMark(64),
               SizedBox(width: 14),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('تلاوة — الإصدار 1.0.0',
+                  Text('تلاوة برو — الإصدار 1.1.0',
                       style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
                   SizedBox(height: 4),
                   Text('رفيقك في رحلتك مع القرآن',
@@ -3952,6 +4619,24 @@ class _SettingsPageState extends State<SettingsPage> {
             ])),
             const Positioned(top: 0, left: 0, child: FloralCorner(size: 56)),
           ]),
+          // Pro: إسناد البحث المعجمي — يظهر فقط إن كانت جداول المعجم
+          // مثبتة فعلاً في المكتبة (وهي كذلك في هذا الإصدار).
+          if (Repo.i.lexiconMeta().isNotEmpty) ...[
+            const SizedBox(height: 18),
+            softCard(
+                c,
+                child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('المصادر والنِّسَب',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                      SizedBox(height: 8),
+                      Text(
+                          'البحث المعجمي مبني على تحليلات صرفية من Quranic Arabic Corpus v0.4 '
+                          '(corpus.quran.com) — برخصة GPL. التأكيد القانوني لشحن الجداول المشتقة ما زال معلّقاً.',
+                          style: TextStyle(fontSize: 12, height: 1.8)),
+                    ])),
+          ],
         ]),
       ),
     );
