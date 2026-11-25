@@ -58,6 +58,45 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Stable debug keystore — why: each GitHub runner generates a fresh
+      # ~/.android/debug.keystore, so every build had a DIFFERENT signature
+      # (proven 2026-11-25: pro-build-25, poc-14 and poc-15 all carry
+      # different certificates). Android refuses to update an installed app
+      # with a different signature, so pro-build-25 could not install over
+      # pro-build-24 ("package appears to be invalid"). This step creates
+      # ONE keystore on the first run, commits it to tools/debug.keystore,
+      # and reuses it for every later build — so updates work from the next
+      # build on. It is a DEBUG (trial) key with the public standard
+      # credentials (android/androiddebugkey/android): it provides install
+      # identity only, no security. A real release key (in GitHub Secrets)
+      # must replace it before any store release. The installed pro-build-24
+      # was signed with a lost per-run key, so users must uninstall it once
+      # (export data first) and install the new build fresh.
+      - name: Ensure stable debug keystore
+        run: |
+          KEYSTORE=tools/debug.keystore
+          if [ -f "$KEYSTORE" ]; then
+            echo 'Using committed stable debug keystore.'
+          else
+            echo 'No stable debug keystore yet — generating one (first run only).'
+            keytool -genkeypair -v -keystore "$KEYSTORE" \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname 'CN=Android Debug, O=Android, C=US'
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git add "$KEYSTORE"
+            git commit -m 'Add stable debug keystore so trial builds keep one signature [skip ci]' || echo 'nothing to commit'
+            git push origin HEAD:main || {
+              echo 'push failed — another run may have created it; taking the committed one'
+              git fetch origin main
+              git checkout origin/main -- "$KEYSTORE"
+            }
+          fi
+          mkdir -p ~/.android
+          cp "$KEYSTORE" ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | head -4
+
       - name: Set up Flutter 3.50.1
         uses: subosito/flutter-action@v2
         with:
