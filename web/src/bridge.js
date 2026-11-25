@@ -18,9 +18,45 @@
 //     at instead of timing out on a generic "loading model")
 //   {type:"position", event:{...}}   (position events, with timeMs audio clock)
 //   {type:"checker", event:{...}}    (checker events, suspected/confirmed/...)
+//   {type:"env-probe", probe:{...}} (NEW 2026-11-26: early environment
+//     probe, posted BEFORE loadWebModel — crossOriginIsolated,
+//     SharedArrayBuffer live check, navigator.gpu + requestAdapter,
+//     provider list, threads applied, HTTP status of both JSEP files.
+//     Posted even when the load later fails, so Dart can name the cause.
+//     See web/src/env_probe.js.)
 //   {type:"modelLoadMs", ms, backend}
 //   {type:"error", message, reason}  (incl. MicrophoneError reasons:
 //                                      denied | unavailable | insecure-context)
+//     Since 2026-11-26 the load-error post ALSO carries the environment
+//     (crossOriginIsolated, sharedArrayBuffer, gpuInNavigator,
+//     providers, threadsApplied) so a failure string is never the only
+//     evidence again.
+//
+// PROVIDER DECISION (2026-11-26, verified from onnxruntime-web 1.30.0
+// source — see ~/workspace/tilawa/JSEP_WASM_PRO_IMPLEMENTATION_2026-11-26.md):
+// the bridge passes NO `providers`, so @tilawa/core uses its default
+// ["webgpu","wasm"]. That default is KEPT deliberately. A webgpu failure
+// AFTER a successful initWasm cannot poison the wasm attempt: backend
+// init runs initWasm FIRST and the EP init SECOND (backend-wasm.ts:69-76);
+// the sticky `aborted` flag is set only by the initWasm catch
+// (proxy-wrapper.ts:150-158); a failed initEp never sets it; and the
+// per-backend abort cache (backend-impl.ts:74-101) is per name, so the
+// webgpu entry's abort does not touch the wasm entry. The observed
+// pro-build-28 poisoning happened because initWasm ITSELF failed (the
+// missing .jsep.mjs) — once the JSEP files are served, initWasm succeeds
+// and a later webgpu adapter/JSEP failure falls through to wasm cleanly.
+// WebGPU is therefore optional-only by construction: tried when
+// available, never a condition for tasmee'.
+//
+// SINGLE-THREAD VERDICT (2026-11-26): onnxruntime-web 1.30.0 ships ONLY
+// threaded builds (dist/ has no single-threaded file) and @tilawa/core
+// requires onnxruntime-web >= 1.19.0, so there is no separate
+// single-threaded build to download and no downgrade path. The
+// single-thread path is the SAME JSEP files with numThreads = 1 —
+// which @tilawa/core already forces when the page is not isolated
+// (dist/runtime/web.js:37) and onnxruntime-web falls back to on its own
+// with a warning (wasm-factory.ts:131-149). A missing SharedArrayBuffer
+// therefore cannot fail a load; only the missing JSEP files could.
 //
 // Notes, from the upstream README (verified 2026-11-25):
 // - `listen()` needs a secure context; the Dart localhost server provides it.
@@ -33,6 +69,7 @@
 //   the self-hosted .onnx file. Nothing is fetched from tilawa.dev at runtime.
 
 import { createTilawa, loadWebModel } from '@tilawa/core/web';
+import { runEnvProbe } from './env_probe.js';
 
 function post(msg) {
   // webview_flutter JavaScriptChannel named "TilawaBridge".
@@ -51,19 +88,51 @@ let mic = null;
 window.TilawaPro = {
   async init(opts) {
     const t0 = performance.now();
+    // Declared outside try: the catch below attaches the probe to the
+    // error post, and a `let` inside try would be out of scope there.
+    let envProbe = null;
     try {
       // Load the reference + model from the localhost server (self-hosted).
       // loadWebModel({model, reference, wasmPaths}) is the documented
       // offline path; createTilawa with a loaded model does not hit the
       // network at all.
       const reference = await (await fetch(opts.referenceUrl)).json();
-      // poc-10: onnxruntime-web >= 1.19 ships ONLY threaded WASM builds
-      // (ort-wasm-simd-threaded.wasm); the single-threaded files do not
-      // exist, which 404ed poc-9. The localhost server now sends COOP+COEP
-      // (see lib/local_server.dart), so the page IS cross-origin isolated
-      // and SharedArrayBuffer works — request threads > 1 so the loader
-      // uses the threaded build that actually exists.
+      // Threads: onnxruntime-web >= 1.19 ships ONLY threaded WASM builds
+      // (ort-wasm-simd-threaded.jsep.*); the single-threaded files do not
+      // exist. Request 2–4 threads, but @tilawa/core forces numThreads = 1
+      // whenever the page is NOT cross-origin isolated
+      // (dist/runtime/web.js:37) — and the SAME JSEP files run
+      // single-threaded in that case (onnxruntime-web falls back to 1
+      // with a warning instead of failing, wasm-factory.ts:131-149). So
+      // a missing SharedArrayBuffer can never fail this load; whether
+      // this page is actually isolated is UNMEASURED until the env probe
+      // below reports it — the old claim here ("the page IS isolated")
+      // was an assumption, and it is removed. The localhost server still
+      // sends COOP+COEP (see lib/local_server.dart) so isolation — and
+      // threads > 1 — is possible, not guaranteed.
       const threads = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4));
+      // EARLY ENV PROBE (2026-11-26): measure the environment BEFORE
+      // loadWebModel and post it to Dart, so a failed load names its
+      // cause. The probe never blocks the load when it succeeds — its
+      // findings are diagnostic only (the Dart pre-flight is the gate).
+      // Only a genuinely unexpected throw from the probe itself is
+      // posted as an error: a failed CHECK is data, an exploding probe
+      // means the page is in an unknown state.
+      try {
+        envProbe = await runEnvProbe({
+          wasmPaths: opts.wasmPaths,
+          threads,
+        });
+        post({ type: 'env-probe', probe: envProbe });
+      } catch (probeErr) {
+        post({
+          type: 'error',
+          message: 'فشل فحص بيئة المحرك قبل التحميل: ' +
+            (probeErr && probeErr.message ? probeErr.message : String(probeErr)),
+          reason: 'env-probe-failed',
+        });
+        return;
+      }
       // 2026-11-26 404 + tier fix: loadWebModel derives the tier ONLY
       // from its `tier` option (default "full") and IGNORES the `model`
       // URL entirely — the loader fetches `<registry base>/model.onnx`
@@ -123,10 +192,26 @@ window.TilawaPro = {
         },
       });
     } catch (err) {
+      // A bare error string is ambiguous by construction (the
+      // pro-build-28 message labelled a provider-agnostic initWasm
+      // failure as a "webgpu" failure) — attach the environment so Dart
+      // can name the cause: isolation, SAB, GPU presence, the providers
+      // actually attempted, and the threads actually applied. The
+      // env-probe (posted before loadWebModel) carries the same values
+      // with per-file JSEP statuses; these fields cover the case where
+      // the probe never posted.
       post({
         type: 'error',
         message: 'فشل تحميل النموذج: ' + (err && err.message ? err.message : String(err)),
         reason: err && err.reason ? err.reason : undefined,
+        crossOriginIsolated: globalThis.crossOriginIsolated,
+        sharedArrayBuffer: typeof SharedArrayBuffer,
+        gpuInNavigator: typeof navigator !== 'undefined' && 'gpu' in navigator,
+        providers: ['webgpu', 'wasm'],
+        threadsApplied: globalThis.crossOriginIsolated
+          ? Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4))
+          : 1,
+        envProbe,
       });
     }
   },
