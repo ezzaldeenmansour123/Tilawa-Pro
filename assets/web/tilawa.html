@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تلاوة برو — التسميع الذكي</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 24px; background: #f7f5ef; color: #222; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .muted { color: #666; font-size: 14px; }
+  #status { font-weight: bold; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div id="status">جارٍ تحميل محرك التسميع…</div>
+    <p class="muted">مساعد حفظ — يكشف أخطاء الحفظ فقط، لا يقيّم التجويد أو النطق؛ حفص فقط؛ قد يخطئ؛ الصوت لا يغادر جهازك.</p>
+    <p class="muted" id="detail">يُقدَّم هذا الصفحة من خادم محلي (http://127.0.0.1) داخل التطبيق — السياق الآمن المطلوب للميكروفون.</p>
+  </div>
+  <script src="/bundle.js"></script>
+  <script>
+    // The Dart side calls window.TilawaPro.init(...) after load.
+    // This page intentionally shows almost nothing: the Flutter UI is the
+    // interface; the WebView is only the engine host.
+    document.getElementById('status').textContent = 'المحرك جاهز للتهيئة من التطبيق.';
+    if (window.TilawaBridge) {
+      window.TilawaBridge.postMessage(JSON.stringify({ type: 'page-loaded' }));
+    }
+  </script>
+</body>
+</html>
