@@ -628,6 +628,25 @@ Future<void> main() async {
   // يجعل التسميع غير متاح فقط، ولا يمنع التطبيق من العمل إطلاقاً.
   try {
     recitationModelManager = await ModelManager.create();
+    // Early bundle check (Phase 2, 2.3): prove assets/web/bundle.js is
+    // present in THIS build before any «جاهز» is shown. The bundle is
+    // built by CI only, so a local dev build legitimately lacks it —
+    // that must NEVER crash startup: it only marks the engine
+    // unavailable with a clear message (ModelManager.status() then
+    // reports it), while the rest of the app works normally.
+    try {
+      final bundle = await rootBundle.load('assets/web/bundle.js');
+      ModelManager.bundleAvailable = bundle.lengthInBytes > 0;
+      if (ModelManager.bundleAvailable != true) {
+        debugPrint(
+            '[TilawaPro] bundle.js موجود لكنه فارغ — التسميع غير متاح.');
+      }
+    } catch (e) {
+      ModelManager.bundleAvailable = false;
+      debugPrint(
+          '[TilawaPro] bundle.js غير موجود في هذا البناء (نسخة تطوير '
+          'محلية؟) — التسميع غير متاح حتى يُبنى التطبيق مع حزمة الويب: $e');
+    }
     recitationEngine = WebViewEngine(modelManager: recitationModelManager);
     recitationProgress = await ProgressStore.create();
     await recitationProgress.load();

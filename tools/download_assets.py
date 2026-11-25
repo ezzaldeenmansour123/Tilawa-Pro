@@ -6,15 +6,24 @@ Downloads, into --out (default assets/models):
   - manifest-lite.json / manifest-full.json (the per-model manifest;
     loadNodeModel(dir) reads dir/manifest.json, so the Node smoke test
     needs it next to the .onnx file)
-  - ref-v2.json (reference; no pinned SHA in the model card — verified by
-    byte count + tools/check_ref_schema.py)
+  - ref-v2.json (reference; pinned SHA-256 since Phase 2 — downloaded
+    2026-11-25 from https://tilawa.dev/v1/reference/ref-v2.json, 6236
+    ayahs; verified by size + SHA + ayah count)
   - onnxruntime-web <version> WASM files (from the jsDelivr CDN mirror of
     the npm package; the app must not depend on tilawa.dev at runtime)
+    — pinned size + SHA-256 since Phase 2, verified in --check-only and
+    on every download (a cached file is never trusted blindly any more)
 
 Hashes/sizes are from docs/model-card.md in yazinsai/tilawa, re-verified
 2026-11-25 against the live registry and the downloaded files:
   lite sha256 4974de78d3c35d2542e7a24d99b747e1160d6e31e366fb68492b74a789890f1b
   full sha256 714e98addee73b1b8781ad7d99b6d3c745acd9116638baf4e12891f53a15af1b
+  ref-v2.json: 4,749,281 bytes,
+    sha256 f236384ea91e81ad554ba2777bc4073c3ff41e34120343a8a474571c577b7727
+  ort-wasm-simd-threaded.mjs: 24,381 bytes,
+    sha256 e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b
+  ort-wasm-simd-threaded.wasm: 14,239,897 bytes,
+    sha256 3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2
 
 Usage:
   python3 tools/download_assets.py --tier lite --out assets/models
@@ -60,11 +69,28 @@ ORT_VERSION = "1.30.0"  # must match web/package.json + lib/model_manager.dart
 # ships ONLY simd-threaded builds — ort-wasm-simd.wasm / ort-wasm.wasm
 # do NOT exist, and the old 4-file list 404'd on the phone (poc-9).
 # The .mjs is the Emscripten loader glue the runtime fetches from
-# wasmPaths alongside the .wasm. Keep in sync with lib/model_manager.dart.
+# wasmPaths alongside the .wasm. Keep in sync with lib/model_manager.dart
+# (kOrtWasmAssets — same names, sizes and hashes, pinned 2026-11-25 from
+# the jsDelivr URLs below).
 ORT_WASM_FILES = [
     "ort-wasm-simd-threaded.mjs",
     "ort-wasm-simd-threaded.wasm",
 ]
+ORT_WASM = {
+    "ort-wasm-simd-threaded.mjs": {
+        "bytes": 24381,
+        "sha256": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b",
+    },
+    "ort-wasm-simd-threaded.wasm": {
+        "bytes": 14239897,
+        "sha256": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2",
+    },
+}
+# Reference identity, pinned 2026-11-25 (Phase 2, 2.5) from the same URL
+# the app downloads from. Keep in sync with lib/model_manager.dart
+# (kReferenceBytes / kReferenceSha256).
+REF_BYTES = 4749281
+REF_SHA256 = "f236384ea91e81ad554ba2777bc4073c3ff41e34120343a8a474571c577b7727"
 
 
 def sha256_of(path: Path) -> str:
@@ -134,13 +160,50 @@ def check_reference(out: Path) -> bool:
     if not dest.exists():
         print(f"MISSING {dest}")
         return False
+    size = dest.stat().st_size
+    if size != REF_BYTES:
+        print(f"SIZE MISMATCH {dest}: {size} != {REF_BYTES}")
+        return False
+    digest = sha256_of(dest)
+    if digest != REF_SHA256:
+        print(f"SHA MISMATCH {dest}: {digest} != {REF_SHA256}")
+        return False
     data = json.loads(dest.read_text(encoding="utf-8"))
     ayahs = data.get("ayahs", [])
     if len(ayahs) != 6236:
         print(f"REF COUNT MISMATCH: {len(ayahs)} != 6236")
         return False
-    print(f"OK {dest} ({dest.stat().st_size} bytes, 6236 ayahs)")
+    print(f"OK {dest} ({size} bytes, sha256 {digest[:12]}..., 6236 ayahs)")
     return True
+
+
+def check_wasm_file(out: Path, name: str) -> bool:
+    """Verify one WASM file by pinned size + SHA-256."""
+    spec = ORT_WASM[name]
+    dest = out / "ort" / ORT_VERSION / name
+    if not dest.exists():
+        print(f"MISSING {dest}")
+        return False
+    size = dest.stat().st_size
+    if size != spec["bytes"]:
+        print(f"SIZE MISMATCH {dest}: {size} != {spec['bytes']}")
+        return False
+    digest = sha256_of(dest)
+    if digest != spec["sha256"]:
+        print(f"SHA MISMATCH {dest}: {digest} != {spec['sha256']}")
+        return False
+    print(f"OK {dest} ({size} bytes, sha256 {digest[:12]}...)")
+    return True
+
+
+def check_wasm(out: Path) -> bool:
+    """Verify both WASM files by pinned size + SHA-256 (Phase 2, 2.5).
+
+    --check-only used to skip WASM entirely, and the download path
+    trusted any cached file with «OK (cached)» — a corrupt WASM then
+    survived every check and failed only on the phone at load time.
+    """
+    return all(check_wasm_file(out, name) for name in ORT_WASM_FILES)
 
 
 def main() -> int:
@@ -157,7 +220,8 @@ def main() -> int:
     if args.check_only:
         ok = (check_model(out, args.tier)
               and check_manifest(out, args.tier)
-              and check_reference(out))
+              and check_reference(out)
+              and check_wasm(out))
         return 0 if ok else 1
 
     dest = out / f"model-{args.tier}.onnx"
@@ -177,7 +241,7 @@ def main() -> int:
             return 1
 
     ref = out / "ref-v2.json"
-    if not ref.exists():
+    if not (ref.exists() and check_reference(out)):
         print(f"Downloading {BASE}/reference/ref-v2.json ...")
         download(f"{BASE}/reference/ref-v2.json", ref)
     if not check_reference(out):
@@ -188,8 +252,13 @@ def main() -> int:
     for name in ORT_WASM_FILES:
         target = ort_dir / name
         if target.exists():
-            print(f"OK {target} (cached)")
-            continue
+            if check_wasm_file(out, name):
+                # Cached file trusted only when size + SHA match —
+                # never blind «OK (cached)» (Phase 2, 2.5).
+                continue
+            # Present but corrupt: drop it and re-download below.
+            print(f"RE-DOWNLOADING corrupt cached {target}")
+            target.unlink()
         url = (
             f"https://cdn.jsdelivr.net/npm/onnxruntime-web@{ORT_VERSION}"
             f"/dist/{name}"
@@ -197,7 +266,8 @@ def main() -> int:
         print(f"Downloading {url} ...")
         try:
             download(url, target)
-            print(f"OK {target} ({target.stat().st_size} bytes)")
+            if not check_wasm_file(out, name):
+                return 1
         except Exception as exc:  # noqa: BLE001 - fail the build loudly
             # A missing WASM file MUST fail CI: the old WARN-only behaviour
             # let the poc-9 404 (ort-wasm-simd.wasm does not exist in

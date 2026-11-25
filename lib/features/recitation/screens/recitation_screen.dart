@@ -68,6 +68,11 @@ class _RecitationScreenState extends State<RecitationScreen> {
   int? _lastLoadMs;
   bool _progressLoaded = false;
 
+  /// True once a load has actually been attempted (Phase 2, 2.3): before
+  /// the first load the engine row is neutral grey («لم يُحمَّل بعد»),
+  /// NOT red — red before any attempt wrongly suggested a failure.
+  bool _engineLoadAttempted = false;
+
   @override
   void initState() {
     super.initState();
@@ -148,7 +153,10 @@ class _RecitationScreenState extends State<RecitationScreen> {
       int? loadMs;
       if (!_engineReady) {
         if (mounted) {
-          setState(() => _loadingLabel = 'جارٍ تحميل النموذج…');
+          setState(() {
+            _loadingLabel = 'جارٍ تحميل النموذج…';
+            _engineLoadAttempted = true;
+          });
         }
         final t0 = DateTime.now();
         // onStage mirrors the engine's progress step by step, so a hang
@@ -367,9 +375,11 @@ class _RecitationScreenState extends State<RecitationScreen> {
               title: 'المحرك',
               subtitle: _engineReady
                   ? 'محمَّل (${widget.engine.loadedTier})'
-                  : 'غير محمَّل بعد — يُحمَّل عند بدء التسميع',
+                  : 'لم يُحمَّل بعد — يُحمَّل عند بدء التسميع',
               ok: _engineReady,
-              unknown: false,
+              // Neutral grey before the first load attempt (2.3e): red
+              // here used to suggest a failure when nothing had failed.
+              unknown: !_engineReady && !_engineLoadAttempted,
             ),
             _checkRow(
               title: 'الميكروفون',

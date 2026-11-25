@@ -11,9 +11,16 @@ import '../speech_engine.dart';
 import '../webview_engine.dart';
 
 class ModelScreen extends StatefulWidget {
-  const ModelScreen({super.key, required this.manager, required this.engine});
+  const ModelScreen(
+      {super.key,
+      required this.manager,
+      required this.engine,
+      this.initialTier = 'lite'});
   final ModelManager manager;
   final WebViewEngine engine;
+
+  /// Tier shown first (e.g. when opened from the packages page).
+  final String initialTier;
   @override
   State<ModelScreen> createState() => _ModelScreenState();
 }
@@ -28,6 +35,7 @@ class _ModelScreenState extends State<ModelScreen> {
   @override
   void initState() {
     super.initState();
+    _tier = widget.initialTier;
     _refresh();
   }
 
@@ -49,11 +57,20 @@ class _ModelScreenState extends State<ModelScreen> {
       );
       setState(() => _message = 'تم التنزيل والتحقق من البصمة بنجاح.');
     } on SpeechEngineException catch (e) {
-      setState(() => _message = 'فشل التنزيل: $e');
+      // Cancelled downloads keep their .part file: the next download
+      // resumes from it instead of starting over (Phase 2, 2.5).
+      setState(() => _message = e.reason == 'cancelled'
+          ? 'أُلغي التنزيل — ما نُزّل محفوظ وسيُستأنف من حيث توقف عند التنزيل التالي.'
+          : 'فشل التنزيل: $e');
     } finally {
       setState(() => _busy = false);
       await _refresh();
     }
+  }
+
+  void _cancel() {
+    widget.manager.cancelDownload();
+    setState(() => _message = 'جارٍ إيقاف التنزيل…');
   }
 
   @override
@@ -99,6 +116,16 @@ class _ModelScreenState extends State<ModelScreen> {
                           Text('المثبَّت: ${info.version}'),
                         Text(
                             'ملفات تشغيل المحرك (WASM): ${info.ortBytes == null || info.ortBytes == 0 ? 'غير منزَّلة بعد' : '${(info.ortBytes! / 1048576).toStringAsFixed(1)} MB'}'),
+                        if (info.referenceOk == true)
+                          const Text(
+                              'المرجع: متحقَّق منه (6236 آية، SHA-256 مطابقة)'),
+                        if (info.wasmOk == true)
+                          const Text(
+                              'ملفات التشغيل: متحقَّق منها (الحجم + SHA-256)'),
+                        if (info.bundleOk == false)
+                          const Text(
+                              'حزمة المحرك (bundle.js): غير موجودة في هذا البناء — التسميع غير متاح',
+                              style: TextStyle(color: Colors.red)),
                         if (info.error != null)
                           Text('الخطأ: ${info.error}',
                               style: const TextStyle(color: Colors.red)),
@@ -119,6 +146,14 @@ class _ModelScreenState extends State<ModelScreen> {
                 ? 'جارٍ التنزيل — ${((_progress ?? 0) * 100).toStringAsFixed(0)}%'
                 : 'تنزيل النموذج ($_tier) + ملفات التشغيل والتحقق منها'),
           ),
+          if (_busy) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _cancel,
+              icon: const Icon(Icons.cancel),
+              label: const Text('إلغاء التنزيل (يُستأنف لاحقاً من حيث توقف)'),
+            ),
+          ],
           if (_message != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),

@@ -140,7 +140,8 @@ jobs:
       # حزمة الويب لمحرك التسميع (yazinsai/tilawa عبر WebView).
       # مصادر web/ يضيفها وكيل آخر؛ هذه الخطوة تفشل بصوت عالٍ إن
       # غاب المصدر، وتبني الحزمة وتتحقق من وجود الملف الناتج.
-      # `npm install` لا `npm ci`: قد لا يوجد package-lock.json بعد.
+      # `npm ci` لا `npm install`: web/package-lock.json مثبَّت (وُلّد 2026-11-25،
+      # البند 2.4 من المرحلة 2) فيُثبَّت في CI بالضبط ما اختُبر محلياً.
       - name: Build web bundle (recitation engine)
         run: |
           if [ ! -d web ] || [ ! -f web/package.json ]; then
@@ -148,9 +149,14 @@ jobs:
             exit 1
           fi
           cd web
-          npm install
+          npm ci
           npm run build
           test -s ../assets/web/bundle.js
+          # Actually EVALUATE the bundle in Node (web/smoke-bundle.mjs):
+          # `test -s` only proves the file is non-empty — a bundle that
+          # throws during evaluation dies before defining window.TilawaPro
+          # (the poc-14 failure mode) and would still pass `test -s`.
+          node smoke-bundle.mjs
           ls -lh ../assets/web/bundle.js
 
       # فحص صريح لحجم حزمة الويب — درس poc-12: تهيئة WebView للمحرك
@@ -252,6 +258,27 @@ jobs:
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Tilawa-Pro.apk
+
+      # The bundle was built, size-checked and smoke-tested above, but that
+      # proves only that it exists on the runner — not that Flutter packaged
+      # it into the APK. A missing asset here is exactly the poc-14 failure
+      # mode (HTTP 500 from the local server, no bridge in the page).
+      - name: Verify bundle.js inside APK (fail if missing or tiny)
+        run: |
+          apk=Tilawa-Pro.apk
+          entry=$(unzip -l "$apk" | grep 'assets/flutter_assets/assets/web/bundle.js' || true)
+          if [ -z "$entry" ]; then
+            echo "ERROR: assets/flutter_assets/assets/web/bundle.js is NOT inside $apk — the local server would serve nothing and WebView init would fail (poc-14)."
+            unzip -l "$apk" | grep 'assets/web/' || echo '(no assets/web/ entries in APK at all)'
+            exit 1
+          fi
+          size=$(echo "$entry" | awk '{print $1}')
+          echo "bundle.js inside APK: $size bytes (uncompressed)"
+          if [ "$size" -lt 512000 ]; then
+            echo "ERROR: bundle.js inside APK is only $size bytes (minimum 512000) — suspiciously small for the minified @tilawa/core + onnxruntime-web bundle (measured 1040578 bytes on 2026-11-25)."
+            exit 1
+          fi
+          echo 'bundle.js inside APK OK'
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

@@ -13,12 +13,28 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 
 class LocalServer {
   LocalServer._(this._server, this._modelDir);
   final HttpServer _server;
   final Directory _modelDir;
+
+  /// Permanent diagnostics (Phase 2, 2.3): every request is logged as
+  /// `METHOD path -> status`. Before this, a 404/500 from the server was
+  /// invisible — the WebView just hung and Dart saw a timeout.
+  /// Tests may set [onLog] to capture lines; otherwise [debugPrint].
+  static void Function(String message)? onLog;
+
+  static void _log(String message) {
+    final sink = onLog;
+    if (sink != null) {
+      sink(message);
+    } else {
+      debugPrint('[LocalServer] $message');
+    }
+  }
 
   int get port => _server.port;
   String get baseUrl => 'http://127.0.0.1:$port/';
@@ -66,8 +82,15 @@ class LocalServer {
   }
 
   Future<void> _handle(HttpRequest req) async {
+    // 2.2 (Phase 2): the /ort/ branch below is VERIFIED fixed — it serves
+    // File('${_modelDir.path}$path') where path starts with '/', exactly
+    // like the /models/ branch serves '/${path.substring(8)}'. The old
+    // code built File('${_modelDir.path}${path.substring(1)}') (missing
+    // '/'), so every WASM request 404'd (poc-12). Regression-tested in
+    // test/local_server_test.dart ('serves the WASM runtime from /ort/').
+    final path = req.uri.path;
+    final method = req.method;
     try {
-      final path = req.uri.path;
       if (path == '/' || path == '/tilawa.html') {
         await _serveAsset(req, 'assets/web/tilawa.html');
       } else if (path == '/bundle.js') {
@@ -77,16 +100,6 @@ class LocalServer {
       } else if (path.startsWith('/ort/')) {
         // onnxruntime-web WASM files, downloaded by tools/download_assets.py
         // into <modelDir>/ort/<version>/.
-        //
-        // FIXED 2026-11-25 (diagnosis of the poc-12 phone failure — the
-        // engine never became ready, 120 s timeout, no error): the old
-        // code built File('${_modelDir.path}${path.substring(1)}'),
-        // i.e. "<dir>ort/1.30.0/..." with the '/' missing
-        // ("tilawa-modelsort/..." — a directory that never exists), so
-        // EVERY /ort/ request 404'd while the disk-side check
-        // (ModelManager.ortWasmReady) passed — the readiness gate could
-        // not see the breakage. `path` already starts with '/', so the
-        // model dir + path is the correct on-disk file.
         await _serveFile(req, File('${_modelDir.path}$path'));
       } else {
         _isolationHeaders(req.response);
@@ -101,6 +114,10 @@ class LocalServer {
         ..statusCode = HttpStatus.internalServerError
         ..write('server error: $e');
       await req.response.close();
+    } finally {
+      // Log every request with its final status (2.3a) — including the
+      // 404/500 paths above, which used to fail silently.
+      _log('$method $path -> ${req.response.statusCode}');
     }
   }
 
