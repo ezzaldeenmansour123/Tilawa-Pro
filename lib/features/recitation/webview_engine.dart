@@ -36,6 +36,13 @@ import 'model_manager.dart';
 import 'models.dart';
 import 'speech_engine.dart';
 
+/// App version + build, mirrored from pubspec.yaml (`version: 1.1.0+1`).
+/// There is no package_info_plus dependency (deliberately: no new
+/// dependency for this fix-up), so this literal must be kept in sync
+/// with pubspec.yaml and the '1.1.0+1' literals in main.dart by hand.
+/// A runtime-read version would need package_info_plus.
+const kAppVersion = '1.1.0+1';
+
 class WebViewEngine implements SpeechEngine {
   WebViewEngine({required this.modelManager});
 
@@ -47,6 +54,46 @@ class WebViewEngine implements SpeechEngine {
   EngineCapabilities? _capabilities;
   EventLog? _log;
   String? _tier;
+  // Last load stage (Arabic label) — promoted to a field (not a load()
+  // local) so the bridge's 'stage' messages during init() can advance
+  // it too; otherwise a hang inside the JS load would only ever name
+  // the last Dart stage in the timeout error. [_loadStages] keeps the
+  // full trail for the session event log (beginLog records it).
+  String _stage = '';
+  final _loadStages = <String>[];
+  void Function(String stageLabel)? _onStage;
+
+  /// True once the bridge reported the loader's warmup probe passed for
+  /// the current load (explicit 'probe' message — never inferred from
+  /// 'ready'). Reset at the start of every load(); a stale bundle that
+  /// never posts 'probe' leaves this false, and beginLog records that
+  /// absence instead of assuming a probe ran.
+  bool _probePassed = false;
+
+  /// The last 'modelLoadMs' payload from the bridge (load time, backend,
+  /// crossOriginIsolated, threads) — the proof the ONNX Inference
+  /// Session was created. Kept in a field because the event log is not
+  /// open yet during load(), so appending it there directly would drop
+  /// it; beginLog carries it into the session log instead.
+  Map<String, dynamic>? _lastModelLoad;
+
+  /// True once any session log has been written in this process.
+  /// Static on purpose: engine instances are re-created per screen
+  /// (main.dart holds one, packages_page.dart builds another), so only
+  /// a static survives them — and it resets when the OS kills/restarts
+  /// the process, which is exactly what makes the first beginLog of a
+  /// process the "first session since this app launch" (cold start).
+  static bool _sessionLoggedThisProcess = false;
+
+  /// Advances [_stage], records it in [_loadStages] (no consecutive
+  /// duplicates) and mirrors it to the UI via [_onStage].
+  void setStage(String label) {
+    _stage = label;
+    if (_loadStages.isEmpty || _loadStages.last != label) {
+      _loadStages.add(label);
+    }
+    _onStage?.call(label);
+  }
   // "surah:ayah" -> display words, from the engine's own ref-v2.json.
   Map<String, List<String>>? _referenceWords;
   bool _listening = false;
@@ -91,14 +138,17 @@ class WebViewEngine implements SpeechEngine {
     void Function(String stageLabel)? onStage,
   }) async {
     _tier = tier;
+    _onStage = onStage;
+    _loadStages.clear();
+    _probePassed = false;
+    _lastModelLoad = null;
     // Last completed stage (Arabic label), shown in the timeout error so
     // a hang is never silent again: the UI mirrors it live via onStage.
-    var stage = 'جارٍ فحص النموذج…';
-    void setStage(String label) {
-      stage = label;
-      onStage?.call(label);
-    }
-
+    // Stage map for this load path (check files → check model → verify
+    // integrity happen atomically inside status(); load WASM → load
+    // ONNX are the pre-flight checks below; init ORT → create session
+    // → probe happen inside the JS init and are reported back by the
+    // bridge's 'stage' messages, which advance this same stage).
     setStage('جارٍ فحص النموذج…');
     final info = await modelManager.status(tier);
     if (info.status != ModelStatus.ready) {
@@ -200,6 +250,33 @@ class WebViewEngine implements SpeechEngine {
         'ملف التشغيل $name',
       );
     }
+    // PRE-FLIGHT: model + reference (2026-11-26 404 fix). The disk-side
+    // checks above prove the files exist on disk, but they cannot see a
+    // broken server mapping — and the model 404 was exactly that. Fetch
+    // each file over HTTP and demand 200 + the exact expected size for
+    // the tier being loaded. Two model URLs are checked on purpose:
+    // the flat URL Dart hands the bridge (generic /models/ mapping)
+    // AND the registry path the engine actually fetches
+    // (models/<id>/<version>/model.onnx) — loadWebModel ignores the
+    // model URL and requests the registry path, so checking only the
+    // first URL would have passed while the real fetch 404'd.
+    setStage('جارٍ التحقق من النموذج والمرجع عبر الخادم المحلي…');
+    final asset = tier == 'lite' ? kLiteModel : kFullModel;
+    await _checkServed(
+      '${_server!.baseUrl}models/model-$tier.onnx',
+      'ملف النموذج (model-$tier.onnx)',
+      expectedBytes: asset.bytes,
+    );
+    await _checkServed(
+      '${_server!.baseUrl}models/${asset.modelId}/${asset.version}/model.onnx',
+      'ملف النموذج (مسار السجل models/${asset.modelId}/${asset.version}/model.onnx)',
+      expectedBytes: asset.bytes,
+    );
+    await _checkServed(
+      '${_server!.baseUrl}models/ref-v2.json',
+      'المرجع (ref-v2.json)',
+      expectedBytes: kReferenceBytes,
+    );
     setStage('جارٍ التحقق من جسر المحرك…');
     // Bridge check WITH RETRIES (Phase 2, 2.3): a single immediate
     // `typeof` can race a still-evaluating bundle.js (classic scripts
@@ -242,17 +319,21 @@ class WebViewEngine implements SpeechEngine {
       kModelLoadTimeout,
       onTimeout: () => throw SpeechEngineException(
           'انتهت مهلة تحميل النموذج (${kModelLoadTimeout.inSeconds} ثانية) — '
-          'توقف عند مرحلة: $stage. إن تكرر ذلك، تحقق من صفحة «النموذج» '
+          'توقف عند مرحلة: $_stage. إن تكرر ذلك، تحقق من صفحة «النموذج» '
           '(النموذج مثبَّت + ملفات التشغيل موجودة)، ثم أعد المحاولة.'),
     );
   }
 
   /// Fetches one file the engine needs from the localhost server and
-  /// demands HTTP 200 + a non-empty body. The disk-side checks cannot do
-  /// this: a file can exist on disk yet be unservable (wrong server path),
-  /// which is exactly what hung poc-12. Throws [SpeechEngineException]
-  /// with an actionable message instead of letting init hang.
-  Future<void> _checkServed(String url, String label) async {
+  /// demands HTTP 200 + a non-empty body — or, when [expectedBytes] is
+  /// given, 200 + exactly that many bytes. The disk-side checks cannot
+  /// do this: a file can exist on disk yet be unservable (wrong server
+  /// path), which is exactly what hung poc-12 and 404'd the model on
+  /// 2026-11-26. A failed check names the URL, the expected size and
+  /// the actual status/size. Throws [SpeechEngineException] with an
+  /// actionable message instead of letting init hang.
+  Future<void> _checkServed(String url, String label,
+      {int? expectedBytes}) async {
     final client = HttpClient();
     try {
       final req = await client
@@ -261,22 +342,32 @@ class WebViewEngine implements SpeechEngine {
       final res = await req.close().timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
         throw SpeechEngineException(
-            '$label غير متاح من الخادم المحلي (HTTP ${res.statusCode}) — '
+            '$label غير متاح من الخادم المحلي — الرابط: $url — '
+            'الحالة الفعلية: HTTP ${res.statusCode}'
+            '${expectedBytes == null ? '' : ' (المتوقع: 200 وحجم $expectedBytes بايت)'} — '
             'أعد تشغيل التطبيق، وإن تكرر أعد تنزيل النموذج.');
       }
       var bytes = 0;
       await for (final chunk in res) {
         bytes += chunk.length;
       }
+      if (expectedBytes != null && bytes != expectedBytes) {
+        throw SpeechEngineException(
+            '$label وصل بحجم خاطئ من الخادم المحلي — الرابط: $url — '
+            'المتوقع: $expectedBytes بايت، الفعلي: $bytes بايت — '
+            'الملف غير مكتمل أو من فئة خاطئة؛ أعد تنزيل النموذج.');
+      }
       if (bytes == 0) {
         throw SpeechEngineException(
-            '$label وصل فارغاً من الخادم المحلي — أعد المحاولة.');
+            '$label وصل فارغاً من الخادم المحلي — الرابط: $url — '
+            'أعد المحاولة.');
       }
     } on SpeechEngineException {
       rethrow;
     } on TimeoutException {
       throw SpeechEngineException(
-          'انتهت مهلة الوصول إلى $label من الخادم المحلي — الخادم لا يرد.');
+          'انتهت مهلة الوصول إلى $label من الخادم المحلي — الرابط: $url — '
+          'الخادم لا يرد.');
     } finally {
       client.close();
     }
@@ -322,11 +413,76 @@ class WebViewEngine implements SpeechEngine {
         } else {
           _events.addError(err);
         }
+      case 'stage':
+        // Load progress inside the JS init (bridge.js posts 'load-onnx'
+        // before loadWebModel and 'create-session' after it resolves).
+        // Only meaningful while a load is pending; a stray stage after
+        // load is ignored. Advances the same stage the timeout error
+        // names, so a hang inside init() is diagnosable.
+        if (_loadCompleter != null) {
+          final s = (data['stage'] as String?) ?? '';
+          setStage(s == 'load-onnx'
+              ? 'جارٍ تحميل ملف النموذج (ONNX) وتهيئة المحرك…'
+              : s == 'create-session'
+                  ? 'جارٍ إنشاء جلسة المحرك…'
+                  : 'جارٍ تحميل النموذج داخل المحرك…');
+        }
+      case 'probe':
+        // Explicit warmup-probe result from the bridge (posted right
+        // after loadWebModel resolves): the ONNX session was created and
+        // its probe run returned structurally valid output. Only
+        // meaningful while a load is pending.
+        if (_loadCompleter != null && data['result'] == 'passed') {
+          _probePassed = true;
+          debugPrint('[WebViewEngine] probe passed — ONNX session '
+              'created and warmup run returned valid output');
+          setStage('تم إنشاء جلسة المحرك ونجح اختبارها…');
+        }
       case 'ready':
         final caps = EngineCapabilities.fromJson(
           (data['capabilities'] as Map).cast<String, dynamic>(),
         );
+        // Tier truthfulness (§6): the bridge reports the model it
+        // ACTUALLY loaded (from the loader's own manifest). If it
+        // disagrees with the tier the user picked — e.g. a stale
+        // bundle.js without the tier fix loaded full for a lite pick —
+        // never show a wrong "ready" card: fail loudly instead.
+        // Two caps shapes arrive here: the bridge's provisional one
+        // (modelVersion "spliced-clean@1-int8", tier present) and the
+        // engine's real one from the first session (modelVersion is the
+        // bare manifest id "spliced-clean", tier ABSENT) — accept both,
+        // and accept a missing tier, but never a wrong model id.
+        if (_tier != null) {
+          final expectedId =
+              (_tier == 'lite' ? kLiteModel : kFullModel).modelId;
+          final modelOk = caps.modelVersion == expectedId ||
+              caps.modelVersion.startsWith('$expectedId@');
+          final tierOk = caps.tier.isEmpty || caps.tier == _tier;
+          if (!modelOk || !tierOk) {
+            final err = SpeechEngineException(
+                'المحرك حمّل نموذجاً من فئة مختلفة عن المطلوبة: طُلبت '
+                'فئة «$_tier» ($expectedId@1-int8) لكن المحرك أبلغ عن '
+                '«${caps.modelVersion}»'
+                '${caps.tier.isEmpty ? '' : ' (فئة «${caps.tier}»)'} — '
+                'أعد بناء حزمة المحرك (bundle.js) أو أعد تنزيل النموذج.');
+            if (_loadCompleter != null) {
+              _loadCompleter!.completeError(err);
+              _loadCompleter = null;
+            } else {
+              _events.addError(err);
+            }
+            break;
+          }
+        }
         _capabilities = caps;
+        // Explicit "session created" evidence (a): the ONNX session
+        // exists, its warmup probe reported, and the engine is ready —
+        // one log line in logcat, so a load that only "looks ready" in
+        // the UI still has a checkable trace. The visible state is the
+        // recitation screen's «محمَّل (tier)» row.
+        debugPrint('[WebViewEngine] engine ready: modelVersion='
+            '${caps.modelVersion} tier=${caps.tier} '
+            'backend=${caps.backend} probePassed=$_probePassed');
         _loadCompleter?.complete(caps);
         _loadCompleter = null;
         await _log?.append('capabilities',
@@ -354,14 +510,24 @@ class WebViewEngine implements SpeechEngine {
         await _log?.append('checker', payload, audioMs: ev.timeMs);
         _events.add(ev);
       case 'modelLoadMs':
-        await _log?.append('meta', {
+        // Proof the ONNX Inference Session was created (a): load time,
+        // backend, cross-origin isolation, thread count. The event log
+        // is NOT open during load(), so this used to be silently dropped
+        // by the `_log?.append` below — keep it in [_lastModelLoad] so
+        // beginLog carries it into the session log, and log it now.
+        _lastModelLoad = {
           'modelLoadMs': data['ms'],
           'backend': data['backend'],
           // poc-10 diagnostics: proves on the phone whether the page was
           // really cross-origin isolated and how many WASM threads ran.
           'crossOriginIsolated': data['crossOriginIsolated'],
           'threads': data['threads'],
-        }, audioMs: null);
+        };
+        debugPrint('[WebViewEngine] ONNX session created: '
+            'modelLoadMs=${data['ms']} backend=${data['backend']} '
+            'crossOriginIsolated=${data['crossOriginIsolated']} '
+            'threads=${data['threads']}');
+        await _log?.append('meta', _lastModelLoad!, audioMs: null);
     }
   }
 
@@ -433,13 +599,42 @@ class WebViewEngine implements SpeechEngine {
     required String sessionId,
     required Map<String, dynamic> meta,
   }) async {
+    // First session log of this process == first session since the app
+    // launch (see _sessionLoggedThisProcess). Recorded before creating
+    // the log so a crash mid-create still leaves the flag consistent
+    // for the next attempt in the same process.
+    final coldStart = !_sessionLoggedThisProcess;
+    _sessionLoggedThisProcess = true;
     _log = await EventLog.create(sessionId: sessionId, sessionMeta: {
       ...meta,
       'sessionStartedWallMs': DateTime.now().millisecondsSinceEpoch,
+      // Build/device identity (Q6): ties a detached log file to the
+      // app build and the OS it ran on. backend/modelVersion are
+      // already recorded below; they are not repeated here.
+      'appVersion': kAppVersion,
+      'os': Platform.operatingSystem,
+      'osVersion': Platform.operatingSystemVersion,
+      'coldStart': coldStart,
       'tier': _tier,
       'backend': _capabilities?.backend,
       'modelVersion': _capabilities?.modelVersion,
       'modelSha256': _capabilities?.modelSha256,
+      // The stage trail of the load that produced this session, so a
+      // later failure can be traced to the stage it stopped at.
+      'loadStages': List<String>.of(_loadStages),
+      // Load evidence (a): the warmup probe's explicit result and the
+      // ONNX-session creation payload. probePassed == false means the
+      // probe never reported (e.g. a stale bundle) — recorded as-is,
+      // never assumed true.
+      'probePassed': _probePassed,
+      'modelLoad': _lastModelLoad,
+      // Offline evidence (b): the engine's only network surface is the
+      // localhost server (model, reference and WASM all served from
+      // 127.0.0.1; the microphone goes straight into the engine) — no
+      // external fetch happens after load. This records the transport,
+      // not an OS airplane-mode reading: the app has no connectivity
+      // plugin, so it cannot observe the OS radio state.
+      'network': 'localhost-only',
     });
   }
 
