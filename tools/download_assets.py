@@ -20,10 +20,16 @@ Hashes/sizes are from docs/model-card.md in yazinsai/tilawa, re-verified
   full sha256 714e98addee73b1b8781ad7d99b6d3c745acd9116638baf4e12891f53a15af1b
   ref-v2.json: 4,749,281 bytes,
     sha256 f236384ea91e81ad554ba2777bc4073c3ff41e34120343a8a474571c577b7727
-  ort-wasm-simd-threaded.mjs: 24,381 bytes,
-    sha256 e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b
-  ort-wasm-simd-threaded.wasm: 14,239,897 bytes,
-    sha256 3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2
+  ort-wasm-simd-threaded.jsep.mjs: 46,851 bytes,
+    sha256 709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947
+  ort-wasm-simd-threaded.jsep.wasm: 28,312,028 bytes,
+    sha256 3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f
+  (JSEP pins verified 2026-11-26 against the jsDelivr source itself:
+  downloaded from cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/
+  and SHA-256-compared with the vendored node_modules copy —
+  byte-identical. The pre-2026-11-26 non-JSEP pins are RETIRED: the
+  1.30.0 "all" build NEVER requests those files, so they were replaced,
+  not kept alongside.)
 
 Usage:
   python3 tools/download_assets.py --tier lite --out assets/models
@@ -64,26 +70,28 @@ MODELS = {
     },
 }
 ORT_VERSION = "1.30.0"  # must match web/package.json + lib/model_manager.dart
-# onnxruntime-web files needed by the bundle. VERIFIED 2026-11-25 against
-# the live jsDelivr listing: 1.30.0 (and every version back to 1.19.0)
-# ships ONLY simd-threaded builds — ort-wasm-simd.wasm / ort-wasm.wasm
-# do NOT exist, and the old 4-file list 404'd on the phone (poc-9).
-# The .mjs is the Emscripten loader glue the runtime fetches from
-# wasmPaths alongside the .wasm. Keep in sync with lib/model_manager.dart
-# (kOrtWasmAssets — same names, sizes and hashes, pinned 2026-11-25 from
-# the jsDelivr URLs below).
+# onnxruntime-web files needed by the bundle. CORRECTED 2026-11-26
+# (pro-build-28 forensics): the 1.30.0 "all" build loads ONLY the JSEP
+# pair — wasm-utils-import.ts:284 hardcodes
+# 'ort-wasm-simd-threaded.jsep.mjs' — so the old non-JSEP list passed
+# every check while the loader 404'd on the phone. The non-JSEP pair is
+# REPLACED, not kept: this build never requests it (0 occurrences in
+# assets/web/bundle.js). Pins verified 2026-11-26 against the jsDelivr
+# source itself (byte-identical to the vendored node_modules copy).
+# Keep in sync with lib/model_manager.dart (kOrtWasmAssets — same names,
+# sizes and hashes, pinned 2026-11-26 from the jsDelivr URLs below).
 ORT_WASM_FILES = [
-    "ort-wasm-simd-threaded.mjs",
-    "ort-wasm-simd-threaded.wasm",
+    "ort-wasm-simd-threaded.jsep.mjs",
+    "ort-wasm-simd-threaded.jsep.wasm",
 ]
 ORT_WASM = {
-    "ort-wasm-simd-threaded.mjs": {
-        "bytes": 24381,
-        "sha256": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b",
+    "ort-wasm-simd-threaded.jsep.mjs": {
+        "bytes": 46851,
+        "sha256": "709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947",
     },
-    "ort-wasm-simd-threaded.wasm": {
-        "bytes": 14239897,
-        "sha256": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2",
+    "ort-wasm-simd-threaded.jsep.wasm": {
+        "bytes": 28312028,
+        "sha256": "3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f",
     },
 }
 # Reference identity, pinned 2026-11-25 (Phase 2, 2.5) from the same URL

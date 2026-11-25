@@ -44,13 +44,21 @@ void main() {
     });
 
     test('WASM assets carry the measured sizes and 64-hex hashes', () {
+      // JSEP pair (2026-11-26): the 1.30.0 loader requests ONLY these
+      // two files; the old non-JSEP pair is retired (see
+      // model_manager.dart). Pins verified against jsDelivr itself.
       expect(kOrtWasmFiles, [
-        'ort-wasm-simd-threaded.mjs',
-        'ort-wasm-simd-threaded.wasm',
+        'ort-wasm-simd-threaded.jsep.mjs',
+        'ort-wasm-simd-threaded.jsep.wasm',
       ]);
       expect(kOrtWasmAssets.map((a) => a.name).toList(), kOrtWasmFiles);
-      expect(kOrtWasmAssets[0].bytes, 24381);
-      expect(kOrtWasmAssets[1].bytes, 14239897);
+      expect(kOrtWasmAssets[0].bytes, 46851);
+      expect(kOrtWasmAssets[0].sha256,
+          '709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947');
+      expect(kOrtWasmAssets[1].bytes, 28312028);
+      expect(kOrtWasmAssets[1].sha256,
+          '3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f');
+      expect(kOrtWasmTotalBytes, 28358879);
       for (final a in kOrtWasmAssets) {
         expect(a.sha256.length, 64);
         expect(RegExp(r'^[0-9a-f]{64}$').hasMatch(a.sha256), isTrue);

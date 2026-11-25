@@ -16,6 +16,12 @@
 //      manifest state zero-filled — and the outputs the listener needs
 //      (log_probs + new_<state> per state) come back with the right
 //      type/shape.
+//   4. A SECOND, chained inference run: the same silence-shaped x, but
+//      states fed from run 1's new_<state> outputs — exactly how the
+//      listener chains steps at runtime — with the outputs verified
+//      again, plus log_probs probability validity (finite, <= 0,
+//      exp() sums to ~1 per frame) and proof the chained states moved
+//      from zero (real stateful computation, not a shape-correct stub).
 //
 // EXPECTED I/O — measured from @tilawa/core 1.0.0-rc.1
 // (web/node_modules/@tilawa/core/dist/runtime/{web,listener,node}.js):
@@ -47,6 +53,19 @@
 // environment. It NEVER proves tasmee' works on the phone — the phone
 // path (WebView + onnxruntime-web/WASM + microphone + Dart bridge) is
 // verified by the separate on-device phone protocol, not by this file.
+// More precisely: this script validates the MODEL (I/O + real chained
+// inference) via onnxruntime-node on the CPU. It does NOT validate the
+// WebView backend: it never loads onnxruntime-web, never touches a
+// wasmPaths URL, never fetches a JSEP file, never runs in a WebView,
+// and never checks crossOriginIsolated / SharedArrayBuffer /
+// navigator.gpu. A PASS here is compatible with the phone failing on
+// any of those — which is exactly what happened on pro-build-28 (the
+// model was fine; the JSEP runtime files were missing).
+// NO NETWORK: this script reads only the local --model / --manifest
+// files given on its command line. It makes no HTTP request to any
+// host — no CDN, no tilawa.dev — at any point. The same holds at
+// runtime: the bridge loads model, reference and WASM only from the
+// localhost server (127.0.0.1).
 
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, statSync } from 'node:fs';
@@ -376,6 +395,130 @@ if (out) {
     }
   }
   console.log('    new_* state outputs: checked (only failures listed above)');
+}
+
+// ---- 5. Chained second inference (NEW 2026-11-26): the real listener
+// feeds each step's new_<state> outputs back as the NEXT step's state
+// inputs — a single warmup run cannot prove that chaining works. Run a
+// second inference on the SAME silence-shaped input (x = padValue, as
+// the web warmup uses) but with states taken from run 1's outputs, and
+// verify the outputs are structurally valid again. Also verify the
+// log_probs are genuine log-probabilities (finite, <= 0, exp() sums to
+// ~1 per output frame) and that the chained state outputs actually
+// MOVED from their zero inputs — a stub returning zeros would pass a
+// shape check but fail here, so this proves real computation happened.
+// (Step 3/4 above already ran a real inference — this step extends it
+// to the multi-step chaining the listener depends on.)
+console.log('  chained run (step 2: states = run-1 outputs, x = padValue):');
+let out2 = null;
+if (out) {
+  const feeds2 = {};
+  {
+    const xData = new Float32Array(window_ * mels).fill(padValue);
+    feeds2.x = new ort.Tensor('float32', xData, [1, window_, mels]);
+    for (const s of states) {
+      const prev = out[`new_${s.name}`];
+      if (!prev) {
+        fail(`cannot chain: run 1 returned no 'new_${s.name}'`);
+        continue;
+      }
+      feeds2[s.name] = new ort.Tensor(s.dtype, prev.data, prev.dims);
+    }
+  }
+  const t2 = Date.now();
+  try {
+    out2 = await session.run(feeds2);
+    console.log(`  chained run: OK (${Date.now() - t2} ms)`);
+  } catch (err) {
+    fail(`chained run threw: ${err && err.message ? err.message : String(err)}`);
+  }
+  if (out2) {
+    const lp2 = out2.log_probs;
+    if (!lp2) {
+      fail("chained run returned no 'log_probs' output");
+    } else {
+      const len2 = lp2.data ? lp2.data.length : 0;
+      const lastDim2 = lp2.dims && lp2.dims.length ? lp2.dims[lp2.dims.length - 1] : null;
+      console.log(`    log_probs: type=${lp2.type} dims=[${(lp2.dims || []).join(', ')}] data.length=${len2}`);
+      if (lp2.type !== 'float32') fail(`chained log_probs type=${lp2.type}, expected float32`);
+      if (lastDim2 !== null && lastDim2 !== vocab) {
+        fail(`chained log_probs last dim=${lastDim2}, expected vocab ${vocab}`);
+      }
+      if (len2 === 0 || len2 % vocab !== 0) {
+        fail(`chained log_probs data.length=${len2} is not a positive multiple of vocab ${vocab}`);
+      } else {
+        console.log(`    log_probs: OK (${len2 / vocab} output frames x vocab ${vocab})`);
+      }
+    }
+    for (const s of states) {
+      const o2 = out2[`new_${s.name}`];
+      if (!o2) { fail(`chained run returned no 'new_${s.name}' output`); continue; }
+      if (o2.type !== s.dtype) {
+        fail(`chained 'new_${s.name}' type=${o2.type}, expected ${s.dtype}`);
+        continue;
+      }
+      const sameDims = Array.isArray(o2.dims) && o2.dims.length === s.shape.length
+        && o2.dims.every((d, i) => d === s.shape[i]);
+      if (!sameDims) {
+        fail(`chained 'new_${s.name}' dims=[${(o2.dims || []).join(', ')}], expected [${s.shape.join(', ')}]`);
+      }
+    }
+    console.log('    chained new_* state outputs: checked (only failures listed above)');
+  }
+}
+
+// ---- 6. log_probs probability validity (both runs): genuine
+// log-softmax output must be finite, <= 0 everywhere, and exp()
+// must sum to ~1 per output frame. Shape checks alone cannot catch a
+// model returning garbage numbers in the right shape.
+for (const [label, result] of [['warmup', out], ['chained', out2]]) {
+  if (!result || !result.log_probs) continue;
+  const lp = result.log_probs;
+  const data = lp.data;
+  const frames = data.length / vocab;
+  let finite = true;
+  let maxVal = -Infinity;
+  for (let i = 0; i < data.length; i++) {
+    if (!Number.isFinite(data[i])) { finite = false; break; }
+    if (data[i] > maxVal) maxVal = data[i];
+  }
+  if (!finite) {
+    fail(`${label} log_probs contain non-finite values`);
+    continue;
+  }
+  if (maxVal > 0) {
+    fail(`${label} log_probs contain a positive value (${maxVal}) — not log-probabilities`);
+    continue;
+  }
+  let worstSumErr = 0;
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    for (let v = 0; v < vocab; v++) sum += Math.exp(data[f * vocab + v]);
+    worstSumErr = Math.max(worstSumErr, Math.abs(sum - 1));
+  }
+  console.log(`    ${label} log_probs: finite, max=${maxVal.toFixed(4)} (<= 0), worst per-frame exp-sum error=${worstSumErr.toExponential(2)}`);
+  if (worstSumErr > 1e-3) {
+    fail(`${label} log_probs per-frame exp() sums deviate from 1 by ${worstSumErr.toExponential(2)} (> 1e-3) — not a log-softmax`);
+  }
+  // The chained states must have MOVED from their zero inputs: if every
+  // new_<state> in the chained run is still all zeros, the model did no
+  // stateful computation (or the chaining fed zeros by mistake).
+  if (label === 'chained') {
+    let anyNonZero = false;
+    for (const s of states) {
+      const o2 = result[`new_${s.name}`];
+      if (!o2 || !o2.data) continue;
+      for (let i = 0; i < o2.data.length; i++) {
+        if (o2.data[i] !== 0 && o2.data[i] !== 0n) { anyNonZero = true; break; }
+      }
+      if (anyNonZero) break;
+    }
+    if (!anyNonZero) {
+      fail('chained run: every new_<state> output is still all zeros — no stateful computation happened');
+    } else {
+      console.log('    chained states: moved from zero inputs (stateful computation confirmed)');
+    }
+  }
 }
 
 try { await session.release?.(); } catch { /* best-effort */ }
