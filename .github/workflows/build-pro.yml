@@ -234,15 +234,41 @@ jobs:
       # 24 MB؛ النموذج الكامل full يُنزَّل داخل التطبيق عند الطلب).
       # السكربت يضيفه وكيل آخر (على نمط Tilawa-PoC)؛ هذه الخطوة
       # تستدعيه إن وُجد، وتفشل بصوت عالٍ إن غاب.
-      - name: Download model assets (lite tier, SHA-verified)
+      # 2026-11-26: يُنزَّل النموذج الكامل full أيضاً (67.8 MB في CI
+      # مقبول) — لكن لفحص ONNX I/O فقط، لا للشحن: assets/models/ غير
+      # معلنة في pubspec.yaml فلا تُضمَّن في APK إطلاقاً.
+      - name: Download model assets (lite + full tiers, SHA-verified)
         run: |
           if [ ! -f tools/download_assets.py ]; then
             echo 'ERROR: tools/download_assets.py is missing — the model-assets script has not been added yet. Failing loudly instead of building without the recitation model smoke-test assets.'
             exit 1
           fi
           python3 tools/download_assets.py --tier lite --out assets/models
+          python3 tools/download_assets.py --tier full --out assets/models
           test -s assets/models/model-lite.onnx
+          test -s assets/models/model-full.onnx
           ls -lh assets/models/
+
+      # فحص ONNX I/O (2026-11-26، توجيه المستخدم): نجاح تحميل النموذج
+      # ليس دليلاً على عمل التسميع. web/check_onnx_io.mjs ينشئ جلسة
+      # InferenceSession حقيقية عبر onnxruntime-node لكل طبقة، ويتحقق
+      # من أسماء/أنواع/أشكال المدخلات والمخرجات مقابل ما يغذّيه ويقرؤه
+      # @tilawa/core بالضبط (x [1,45,80] + حالات البيان، وlog_probs +
+      # new_*‎)، ثم يشغّل مسبر الإحماء. أي عدم تطابق يُفشل البناء.
+      # بيئة تطوير فقط: النجاح هنا يجيب «هل تُنشأ الجلسة وهل يطابق
+      # الإدخال/الإخراج» — ولا يثبت عمل التسميع على الهاتف إطلاقاً
+      # (ذلك بروتوكول اختبار الهاتف المنفصل).
+      - name: ONNX I/O check (both tiers)
+        run: |
+          node check_onnx_io.mjs \
+            --model ../assets/models/model-lite.onnx \
+            --manifest ../assets/models/manifest-lite.json \
+            --tier lite
+          node check_onnx_io.mjs \
+            --model ../assets/models/model-full.onnx \
+            --manifest ../assets/models/manifest-full.json \
+            --tier full
+        working-directory: web
 
       - name: Create Android project files
         run: |
