@@ -27,6 +27,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'event_log.dart';
@@ -49,6 +50,16 @@ class WebViewEngine implements SpeechEngine {
   // "surah:ayah" -> display words, from the engine's own ref-v2.json.
   Map<String, List<String>>? _referenceWords;
   bool _listening = false;
+
+  /// Permanent diagnostics (Phase 2, 2.3): the last JS console error and
+  /// the last failed subresource seen by the WebView, so a bridge failure
+  /// can name its cause instead of timing out. Null when nothing failed.
+  String? lastConsoleError;
+  String? lastResourceError;
+
+  /// True once the page's own `page-loaded` bridge message arrived.
+  bool get pageLoadedFromBridge => _pageLoadedFromBridge;
+  bool _pageLoadedFromBridge = false;
 
   @override
   EngineCapabilities? get capabilities => _capabilities;
@@ -131,6 +142,7 @@ class WebViewEngine implements SpeechEngine {
     setStage('جارٍ تحميل صفحة المحرك…');
     _controller ??= WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setOnConsoleMessage(_onConsoleMessage)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (_) {
@@ -139,6 +151,16 @@ class WebViewEngine implements SpeechEngine {
             if (_pageLoaded != null && !_pageLoaded!.isCompleted) {
               _pageLoaded!.complete();
             }
+          },
+          // Permanent diagnostics (Phase 2, 2.3): a failing subresource
+          // (bundle.js / WASM / model) used to be invisible to Dart —
+          // onPageFinished fires anyway and init() then hung.
+          onWebResourceError: (error) {
+            final detail =
+                'resource error: ${error.url ?? '?'} — ${error.description} '
+                '(code ${error.errorCode})';
+            lastResourceError = detail;
+            debugPrint('[WebViewEngine] $detail');
           },
         ),
       )
@@ -179,13 +201,30 @@ class WebViewEngine implements SpeechEngine {
       );
     }
     setStage('جارٍ التحقق من جسر المحرك…');
-    final bridge = await _controller!.runJavaScriptReturningResult(
-      "window.TilawaPro ? 'yes' : 'no'",
-    );
-    if (!bridge.toString().contains('yes')) {
+    // Bridge check WITH RETRIES (Phase 2, 2.3): a single immediate
+    // `typeof` can race a still-evaluating bundle.js (classic scripts
+    // block parsing, but a slow WebView must not turn into a false
+    // "bridge missing" verdict). Five attempts, 500 ms apart, demanding
+    // both the object AND its init function. A persistent absence is a
+    // hard, named failure — never a silent hang, never a timeout.
+    var bridgeFound = false;
+    for (var attempt = 0; attempt < 5 && !bridgeFound; attempt++) {
+      if (attempt > 0) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      final bridge = await _controller!.runJavaScriptReturningResult(
+        "typeof window.TilawaPro !== 'undefined' && "
+        "typeof window.TilawaPro.init === 'function' ? 'yes' : 'no'",
+      );
+      bridgeFound = bridge.toString().contains('yes');
+    }
+    if (!bridgeFound) {
+      final cause = lastResourceError ?? lastConsoleError;
       throw SpeechEngineException(
           'جسر المحرك غير موجود في الصفحة — حزمة المحرك (bundle.js) لم '
-          'تُحمَّل. أعد بناء الحزمة أو أعد تشغيل التطبيق.');
+          'تُحمَّل أو رمت خطأً أثناء التقييم. أعد بناء الحزمة أو أعد '
+          'تشغيل التطبيق.'
+          '${cause == null ? '' : ' آخر خطأ مسجَّل: $cause'}');
     }
     setStage('جارٍ تحميل النموذج داخل المحرك…');
     final completer = Completer<EngineCapabilities>();
@@ -243,6 +282,17 @@ class WebViewEngine implements SpeechEngine {
     }
   }
 
+  /// Permanent diagnostics (Phase 2, 2.3): JS console output used to be
+  /// invisible to Dart — a bundle that threw during evaluation left no
+  /// trace anywhere. Errors are kept for the bridge-failure message.
+  void _onConsoleMessage(JavaScriptConsoleMessage message) {
+    debugPrint(
+        '[WebViewEngine] console.${message.level.name}: ${message.message}');
+    if (message.level == JavaScriptLogLevel.error) {
+      lastConsoleError = message.message;
+    }
+  }
+
   Completer<EngineCapabilities>? _loadCompleter;
   Completer<void>? _pageLoaded;
 
@@ -250,6 +300,28 @@ class WebViewEngine implements SpeechEngine {
     final data = jsonDecode(message.message) as Map<String, dynamic>;
     final type = data['type'] as String?;
     switch (type) {
+      case 'page-loaded':
+        // The page's own signal (previously ignored): proves tilawa.html
+        // executed its inline script. It says nothing about bundle.js —
+        // the bundle check in load() is what proves the bridge.
+        _pageLoadedFromBridge = true;
+      case 'bundle-error':
+      case 'page-error':
+        // Reported by tilawa.html itself (script onerror / window.onerror
+        // / missing-bridge check): the bundle failed to load or threw
+        // while evaluating. Fail the pending load loudly with the layer
+        // named, instead of waiting for the 60 s model timeout.
+        final err = SpeechEngineException(
+          (data['message'] ?? 'خطأ في حزمة المحرك') as String,
+          reason: data['reason'] as String?,
+        );
+        debugPrint('[WebViewEngine] $type: ${err.message}');
+        if (_loadCompleter != null) {
+          _loadCompleter!.completeError(err);
+          _loadCompleter = null;
+        } else {
+          _events.addError(err);
+        }
       case 'ready':
         final caps = EngineCapabilities.fromJson(
           (data['capabilities'] as Map).cast<String, dynamic>(),

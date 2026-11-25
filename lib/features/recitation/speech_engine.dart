@@ -135,6 +135,9 @@ class ModelInfo {
     this.downloadFraction,
     this.error,
     this.ortBytes,
+    this.referenceOk,
+    this.wasmOk,
+    this.bundleOk,
   });
 
   final ModelStatus status;
@@ -145,6 +148,18 @@ class ModelInfo {
   final double? downloadFraction; // 0..1 while downloading
   final String? error;
   final int? ortBytes; // total bytes of downloaded onnxruntime-web WASM files
+
+  /// نتيجة فحص المرجع في status(): true = موجود + SHA مطابقة + 6236 آية.
+  /// null = لم يُفحص (لا يحدث في status() الحالي — يُفحص دائماً).
+  final bool? referenceOk;
+
+  /// نتيجة فحص WASM في status(): true = الحجم + SHA مطابقان للملفين.
+  final bool? wasmOk;
+
+  /// نتيجة فحص حزمة المحرك (bundle.js) في status(): true = موجودة في
+  /// هذا البناء، false = غائبة (نسخة تطوير محلية بلا بناء ويب)،
+  /// null = لم يُفحص بعد عند الإقلاع (يُتجاهل — لا يمنع «جاهز»).
+  final bool? bundleOk;
 }
 
 class SpeechEngineException implements Exception {
