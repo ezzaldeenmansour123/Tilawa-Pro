@@ -15,6 +15,7 @@ import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'db.dart';
 import 'core/theme.dart'; // Phase 1: الألوان + buildTheme + الرسامون/الأفاتارات
+import 'core/widgets.dart'; // Phase B W0: TilawaCard وPrimaryButton والأدوات المشتركة (§d.3)
 import 'tajweed.dart'; // Phase 1: فهرس أحكام التجويد + نموذج البيانات (بلا تلوين مدمج)
 import 'data/user_export.dart'; // Pro: نموذج تصدير/استيراد بيانات المستخدم
 import 'data/user_export_io.dart'; // Pro: خدمة التصدير/الاستيراد (ملفات + prefs)
@@ -687,30 +688,15 @@ class TilawaApp extends StatelessWidget {
 }
 
 // ───────── عناصر مشتركة ─────────
+// اسم مستعار رقيق (إعادة التصميم §d.3): softCard تُحوِّل الآن إلى TilawaCard
+// فتنال مواضع استدعائها (~50) البطاقة الموحّدة دون إعادة كتابة ميكانيكية.
+// التوقيع والسلوك بلا تغيير؛ حذف الاسم المستعار تنظيف لاحق وليس من هذه المرحلة.
 Widget softCard(BuildContext c,
     {required Widget child,
     VoidCallback? onTap,
-    EdgeInsets padding = const EdgeInsets.all(16),
-    Gradient? gradient}) {
-  final dark = Theme.of(c).brightness == Brightness.dark;
-  final r = BorderRadius.circular(24);
-  return Container(
-    decoration: BoxDecoration(
-      color: dark ? const Color(0xFF1C2B33) : Colors.white,
-      gradient: gradient,
-      borderRadius: r,
-      boxShadow: [
-        BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.25 : 0.06), blurRadius: 14, offset: const Offset(0, 4))
-      ],
-    ),
-    child: Material(
-      color: Colors.transparent,
-      borderRadius: r,
-      child: InkWell(borderRadius: r, onTap: onTap, child: Padding(padding: padding, child: child)),
-    ),
-  );
-}
+    EdgeInsets padding = const EdgeInsets.all(spaceCard),
+    Gradient? gradient}) =>
+    TilawaCard(child: child, onTap: onTap, padding: padding, gradient: gradient);
 
 TextStyle quranStyle(double size, {double h = 2.0, FontWeight w = FontWeight.w600}) =>
     TextStyle(fontSize: size, height: h, fontWeight: w, fontFamily: settings.amiri ? 'Amiri' : null);
@@ -818,20 +804,9 @@ Future<void> showAyahActions(BuildContext c, Ayah a) async {
   }
 }
 
-Widget emptyState(IconData icon, String text, {String? button, VoidCallback? onTap}) => Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CircleAvatar(radius: 48, backgroundColor: tealLight, child: Icon(icon, size: 48, color: teal)),
-          const SizedBox(height: 20),
-          Text(text, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, height: 1.7)),
-          if (button != null) ...[
-            const SizedBox(height: 20),
-            FilledButton.tonal(onPressed: onTap, child: Text(button)),
-          ],
-        ]),
-      ),
-    );
+// اسم مستعار رقيق (إعادة التصميم §d.3): emptyState تُحوِّل إلى EmptyState.
+Widget emptyState(IconData icon, String text, {String? button, VoidCallback? onTap}) =>
+    EmptyState(icon: icon, text: text, buttonLabel: button, onTap: onTap);
 
 
 // ───────── فضل السور — قائمة منقولة موثقة المصدر ─────────
@@ -927,14 +902,12 @@ class _BootPageState extends State<BootPage> {
             end: Alignment.bottomCenter,
             colors: dark
                 ? [const Color(0xFF101D24), const Color(0xFF1C2B33)]
-                : [skyLight, pinkLight, mintLight],
+                : [bgCream, skyLight],
           ),
         ),
         child: SafeArea(
           child: Stack(children: [
             const Positioned(top: 0, right: 0, child: FloralCorner(size: 120)),
-            const Positioned(top: 0, left: 0, child: FloralCorner(size: 120, flip: true)),
-            const Positioned(bottom: 0, left: 0, child: FloralCorner(size: 100, flip: true)),
             Center(
               child: SingleChildScrollView(
                 child: Padding(
@@ -982,13 +955,9 @@ class _BootPageState extends State<BootPage> {
                     if (error != null) ...[
                       Text(error!, textAlign: TextAlign.center),
                       const SizedBox(height: 16),
-                      FilledButton(onPressed: _start, child: const Text('إعادة المحاولة')),
+                      PrimaryButton(label: 'إعادة المحاولة', onPressed: _start),
                     ] else ...[
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                            value: installing ? progress : null, minHeight: 6),
-                      ),
+                      TilawaProgressBar(value: installing ? progress : null, color: brandPrimary),
                       const SizedBox(height: 12),
                       Text(installing
                           ? 'جارٍ تجهيز المصحف… ${((progress ?? 0) * 100).round()}٪ (مرة واحدة فقط)'
@@ -1056,11 +1025,11 @@ class MorePage extends StatelessWidget {
                   Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   if (sub != null) ...[
                     const SizedBox(height: 2),
-                    Text(sub, style: const TextStyle(fontSize: 12)),
+                    Text(sub, style: const TextStyle(fontSize: 12, color: muted)),
                   ],
                 ]),
               ),
-              const Icon(Icons.chevron_left, color: Colors.grey),
+              const Icon(Icons.chevron_left, color: muted),
             ])),
       );
 
@@ -1131,7 +1100,6 @@ class MorePage extends StatelessWidget {
                   ]),
                 ),
               ])),
-          const Positioned(top: 0, left: 0, child: FloralCorner(size: 56)),
         ]),
       ]),
     );
@@ -1178,7 +1146,6 @@ class OurWorksPage extends StatelessWidget {
                   ]),
                 ),
               ])),
-          const Positioned(top: 0, left: 0, child: FloralCorner(size: 56)),
         ]),
         const SizedBox(height: 16),
         softCard(context, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1199,13 +1166,7 @@ class OurWorksPage extends StatelessWidget {
                     style: TextStyle(fontSize: 13, height: 1.6)),
               ]),
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: mintLight, borderRadius: BorderRadius.circular(20)),
-              child: const Text('الإصدار 1.1.1',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: teal)),
-            ),
+            const StatusChip(label: 'الإصدار 1.1.1', tone: StatusTone.ok),
           ]),
           const SizedBox(height: 12),
           const Text(
@@ -1215,10 +1176,10 @@ class OurWorksPage extends StatelessWidget {
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            child: FilledButton.icon(
+            child: PrimaryButton(
               onPressed: () => _open(context, _releaseUrl),
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('تحميل التطبيق'),
+              icon: Icons.download_rounded,
+              label: 'تحميل التطبيق',
             ),
           ),
           const SizedBox(height: 8),
@@ -1234,7 +1195,7 @@ class OurWorksPage extends StatelessWidget {
         const SizedBox(height: 16),
         const Center(
           child: Text('تطبيقات أخرى قادمة قريبًا إن شاء الله',
-              style: TextStyle(fontSize: 13, color: Colors.grey, height: 1.7)),
+              style: TextStyle(fontSize: 13, color: muted, height: 1.7)),
         ),
       ]),
     );
@@ -1295,15 +1256,8 @@ class _HomePageState extends State<HomePage> {
         GestureDetector(
           onTap: () => Navigator.push(
               context, MaterialPageRoute(builder: (_) => const SearchPage())),
-          child: Container(
+          child: TilawaCard(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: dark ? const Color(0xFF1C2B33) : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10)
-              ],
-            ),
             child: Row(children: [
               const Icon(Icons.search_rounded, color: sky),
               const SizedBox(width: 10),
@@ -1339,13 +1293,38 @@ class _HomePageState extends State<HomePage> {
                 Text('114 سورة • 6,236 آية • المصحف العثماني برواية حفص، وثلاثة تفاسير، وتلاوة صوتية.',
                     style: TextStyle(fontSize: 14, height: 1.7, color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 14),
-                FilledButton.tonalIcon(
-                  onPressed: () => widget.onTab(1),
-                  icon: const Icon(Icons.menu_book_rounded),
-                  label: const Text('تصفح السور'),
-                ),
+                Row(children: [
+                  Expanded(
+                    child: PrimaryButton(
+                      label: 'ابدأ التسميع',
+                      icon: Icons.mic_rounded,
+                      onPressed: () {
+                        if (recitationReady) {
+                          Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => RecitationScreen(
+                                      engine: recitationEngine,
+                                      progressStore: recitationProgress)));
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'التسميع غير متاح على هذا الجهاز حالياً — أعد تشغيل التطبيق وحاول مجدداً')));
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: PrimaryButton(
+                      tonal: true,
+                      label: 'تصفح السور',
+                      icon: Icons.menu_book_rounded,
+                      onPressed: () => widget.onTab(1),
+                    ),
+                  ),
+                ]),
               ])),
-          const Positioned(top: 0, left: 0, child: FloralCorner(size: 72)),
         ]),
         if (_daily != null) ...[
           const SizedBox(height: 14),
@@ -1373,7 +1352,7 @@ class _HomePageState extends State<HomePage> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                           color: dark ? const Color(0xFF24455A) : mintLight,
-                          borderRadius: BorderRadius.circular(16)),
+                          borderRadius: BorderRadius.circular(radiusCardSmall)),
                       child: Row(children: [
                         const Icon(Icons.psychology_rounded, color: teal, size: 20),
                         const SizedBox(width: 8),
@@ -1386,18 +1365,17 @@ class _HomePageState extends State<HomePage> {
                     const SizedBox(height: 10),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: FilledButton.tonalIcon(
+                      child: PrimaryButton(tonal: true,
                         onPressed: () => Navigator.push(
                             context,
                             MaterialPageRoute(
                                 builder: (_) => AssistantPage(ayah: _daily))),
-                        icon: const Icon(Icons.smart_toy_rounded),
-                        label: const Text('اسأل عن هذه الآية'),
+                        icon: Icons.smart_toy_rounded,
+                        label: 'اسأل عن هذه الآية',
                       ),
                     ),
                   ],
                 )),
-            const Positioned(bottom: 0, left: 0, child: FloralCorner(size: 56, flip: true)),
           ]),
         ],
         if (resumeAyah != null) ...[
@@ -1439,11 +1417,7 @@ class _HomePageState extends State<HomePage> {
                     style: const TextStyle(fontSize: 12, color: gold, fontWeight: FontWeight.w700)),
               ]),
               const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                    value: progress, minHeight: 8, backgroundColor: tealLight, color: teal),
-              ),
+              TilawaProgressBar(value: progress, color: teal),
               const SizedBox(height: 8),
               Text(done
                   ? 'تقبّل الله منك — اضغط لبدء ختمة جديدة.'
@@ -1451,7 +1425,7 @@ class _HomePageState extends State<HomePage> {
                   style: const TextStyle(fontSize: 13)),
             ])),
         const SizedBox(height: 18),
-        const Text('أقسام التطبيق', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SectionHeader(title: 'أقسام التطبيق'),
         const SizedBox(height: 10),
         GridView.count(
           crossAxisCount: 2,
@@ -1486,7 +1460,7 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         const SizedBox(height: 18),
-        const Text('سور مختارة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SectionHeader(title: 'سور مختارة'),
         const SizedBox(height: 10),
         GridView.count(
           crossAxisCount: 3,
@@ -1518,12 +1492,12 @@ class _HomePageState extends State<HomePage> {
     final dark = Theme.of(c).brightness == Brightness.dark;
     final bgColor = dark ? const Color(0xFF1C2B33) : bg;
     return Container(
-      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(24)),
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(radiusCard)),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(radiusCard),
         child: InkWell(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(radiusCard),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1593,7 +1567,7 @@ class _SurahsPageState extends State<SurahsPage> {
               prefixIcon: const Icon(Icons.search_rounded),
               hintText: 'ابحث باسم السورة أو رقمها…',
               filled: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(radiusCardSmall), borderSide: BorderSide.none),
             ),
             onChanged: (v) => setState(() => _q = v),
           ),
@@ -1614,9 +1588,9 @@ class _SurahsPageState extends State<SurahsPage> {
                           child: Row(children: [
                             CircleAvatar(
                               radius: 22,
-                              backgroundColor: tealLight,
+                              backgroundColor: goldLight,
                               child: Text('${s.id}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: teal)),
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: gold)),
                             ),
                             const SizedBox(width: 14),
                             Expanded(
@@ -1629,7 +1603,7 @@ class _SurahsPageState extends State<SurahsPage> {
                                     style: const TextStyle(fontSize: 12)),
                               ]),
                             ),
-                            const Icon(Icons.chevron_left, color: Colors.grey),
+                            const Icon(Icons.chevron_left, color: muted),
                           ])),
                     );
                   },
@@ -1746,11 +1720,11 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: Row(children: [
-            Chip(label: Text(_surah.revelation)),
+            StatusChip(label: _surah.revelation, tone: StatusTone.info),
             const SizedBox(width: 8),
-            Chip(label: Text('${_surah.ayahCount} آية')),
+            StatusChip(label: '${_surah.ayahCount} آية', tone: StatusTone.neutral),
             const SizedBox(width: 8),
-            Chip(label: Text('يبدأ في الجزء ${_surah.juzStart}')),
+            StatusChip(label: 'يبدأ في الجزء ${_surah.juzStart}', tone: StatusTone.neutral),
           ]),
         ),
         if (surahVirtues.containsKey(widget.surahId))
@@ -1769,7 +1743,7 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                           style: const TextStyle(fontSize: 13, height: 1.8)),
                       const SizedBox(height: 2),
                       Text('المصدر: ${surahVirtues[widget.surahId]!.$2}',
-                          style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                          style: const TextStyle(fontSize: 11, color: muted)),
                     ]),
                   ),
                 ])),
@@ -1777,8 +1751,7 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: OrnateFrame(
-              child: AnimatedBuilder(
+            child: AnimatedBuilder(
                 animation: audio,
                 builder: (c, _) => ListView.builder(
                   padding: EdgeInsets.zero,
@@ -1793,9 +1766,9 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                     color: isPlaying
                         ? (dark ? const Color(0xFF2C463F) : tealLight)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(radiusButton),
                     child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(radiusButton),
                       onTap: () {
                         user.touch(a.id);
                         user.saveReadingPosition(surah: a.surah, ayahId: a.id, page: a.page);
@@ -1835,7 +1808,6 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
               },
             ),
               ),
-            ),
           ),
         ),
         AnimatedBuilder(
@@ -1847,6 +1819,8 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
             return Container(
               decoration: BoxDecoration(
                 color: Theme.of(c).colorScheme.surface,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(radiusCardSmall)),
                 boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10)],
               ),
               padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
@@ -1884,7 +1858,7 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                         ? Icons.pause_circle_filled_rounded
                         : Icons.play_circle_filled_rounded),
                     iconSize: 40,
-                    color: teal,
+                    color: brandPrimary,
                     onPressed: audio.togglePlayPause,
                   ),
                   IconButton(icon: const Icon(Icons.skip_previous_rounded), onPressed: audio.previous),
@@ -1916,7 +1890,7 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                           ? Icons.repeat_one_rounded
                           : Icons.repeat_rounded,
                       size: 18,
-                      color: audio.repeatMode == LoopMode.off ? Colors.grey : teal,
+                      color: audio.repeatMode == LoopMode.off ? muted : teal,
                     ),
                     label: Text(audio.repeatLabel),
                   ),
@@ -1947,7 +1921,7 @@ class _SurahReaderPageState extends State<SurahReaderPage> {
                     },
                     icon: Icon(Icons.bedtime_rounded,
                         size: 18,
-                        color: audio.sleepEndsAt == null ? Colors.grey : teal),
+                        color: audio.sleepEndsAt == null ? muted : teal),
                     label: Text(audio.sleepEndsAt == null
                         ? 'مؤقت النوم'
                         : 'ينتهي خلال ~${audio.sleepMinutesLeft} د'),
@@ -2049,7 +2023,7 @@ class _MushafPageState extends State<MushafPage> {
             ),
             const SizedBox(height: 8),
             const Text('إن اخترت سورة أو جزءًا فهو يقدَّم على رقم الصفحة.',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
+                style: TextStyle(fontSize: 12, color: muted)),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
@@ -2124,14 +2098,14 @@ class _MushafPageState extends State<MushafPage> {
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: Row(children: [
             if (first != null) ...[
-              Chip(label: Text('الجزء ${first.juz}')),
+              StatusChip(label: 'الجزء ${first.juz}', tone: StatusTone.info),
               const SizedBox(width: 8),
-              Chip(label: Text('${_ayahs.length} آية')),
+              StatusChip(label: '${_ayahs.length} آية', tone: StatusTone.neutral),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(surahNames.join('، '),
                     maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: const TextStyle(fontSize: 12, color: muted)),
               ),
             ],
           ]),
@@ -2183,7 +2157,8 @@ class _MushafPageState extends State<MushafPage> {
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: OrnateFrame(
+      child: TilawaCard(
+        padding: const EdgeInsets.all(8),
         child: ListView.builder(
           itemCount: ayahs.length,
           itemBuilder: (c, i) {
@@ -2218,7 +2193,7 @@ class _MushafPageState extends State<MushafPage> {
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       decoration: BoxDecoration(
         color: dark ? const Color(0xFF24455A) : goldLight,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(radiusButton),
         border: Border.all(color: gold.withValues(alpha: 0.5)),
       ),
       child: Center(
@@ -2295,11 +2270,10 @@ class TajweedPage extends StatelessWidget {
                   style: TextStyle(fontSize: 13, height: 1.9)),
             ])),
         const SizedBox(height: 14),
-        const Text('الأحكام — رواية حفص عن عاصم',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SectionHeader(title: 'الأحكام — رواية حفص عن عاصم'),
         const SizedBox(height: 4),
         const Text('الألوان أدناه هي المفتاح المقترح للتلوين عند تفعيله بعد التحقق.',
-            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+            style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
         const SizedBox(height: 10),
         for (final r in tajweedRules)
           Padding(
@@ -2320,7 +2294,7 @@ class TajweedPage extends StatelessWidget {
           ),
         const SizedBox(height: 6),
         const Text(tajweedAttribution,
-            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.8)),
+            style: TextStyle(fontSize: 12, color: muted, height: 1.8)),
       ]),
     );
   }
@@ -2419,18 +2393,18 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
               ),
               label: const Text('استماع'),
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () => Navigator.push(
                   c, MaterialPageRoute(builder: (_) => AssistantPage(ayah: _a))),
-              icon: const Icon(Icons.smart_toy_rounded),
-              label: const Text('اسأل عن هذه الآية'),
+              icon: Icons.smart_toy_rounded,
+              label: 'اسأل عن هذه الآية',
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () => Share.share('﴿${_a.text}﴾\nسورة ${_a.surahName} — آية ${_a.ayah}'),
-              icon: const Icon(Icons.share_rounded),
-              label: const Text('مشاركة'),
+              icon: Icons.share_rounded,
+              label: 'مشاركة',
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: _a.text));
                 if (!c.mounted) return;
@@ -2439,18 +2413,18 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
                       .showSnackBar(const SnackBar(content: Text('تم نسخ الآية')));
                 }
               },
-              icon: const Icon(Icons.copy_rounded),
-              label: const Text('نسخ'),
+              icon: Icons.copy_rounded,
+              label: 'نسخ',
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () async {
                 final t = await askText(c, 'ملاحظة على الآية', note ?? '', lines: 3);
                 if (t != null) setState(() => user.setNote(_a.id, t));
               },
-              icon: const Icon(Icons.note_add_rounded),
-              label: const Text('ملاحظة'),
+              icon: Icons.note_add_rounded,
+              label: 'ملاحظة',
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () async {
                 final t = await askText(c, 'وسم للآية', tag ?? '',
                     chips: ['دعاء', 'أحكام', 'قصص', 'عقيدة', 'أخلاق']);
@@ -2469,21 +2443,21 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
                   });
                 }
               },
-              icon: const Icon(Icons.label_rounded),
-              label: const Text('وسم'),
+              icon: Icons.label_rounded,
+              label: 'وسم',
             ),
           ]),
           const SizedBox(height: 12),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () => _go(-1),
-              icon: const Icon(Icons.arrow_forward_rounded),
-              label: const Text('الآية السابقة'),
+              icon: Icons.arrow_forward_rounded,
+              label: 'الآية السابقة',
             ),
-            FilledButton.tonalIcon(
+            PrimaryButton(tonal: true,
               onPressed: () => _go(1),
-              icon: const Icon(Icons.arrow_back_rounded),
-              label: const Text('الآية التالية'),
+              icon: Icons.arrow_back_rounded,
+              label: 'الآية التالية',
             ),
           ]),
           const SizedBox(height: 18),
@@ -2491,10 +2465,7 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
             const Text('التفسير', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
             const SizedBox(width: 8),
             if (online)
-              const Chip(
-                label: Text('متصل بالإنترنت', style: TextStyle(fontSize: 11)),
-                backgroundColor: Color(0xFFFFF3CD),
-              ),
+              const StatusChip(label: 'متصل بالإنترنت', tone: StatusTone.warn),
           ]),
           const SizedBox(height: 8),
           SingleChildScrollView(
@@ -2542,7 +2513,7 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text('آيات تشترك مع هذه الآية في ألفاظها وموضوعها — من نص القرآن الكريم.',
-              style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+              style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
           const SizedBox(height: 8),
           FutureBuilder<List<Ayah>>(
             future: Repo.i.related(_a),
@@ -2555,7 +2526,7 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
               final rel = snap.data ?? [];
               if (rel.isEmpty) {
                 return const Text('لا توجد آيات مشابهة ظاهرة لهذه الآية.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey));
+                    style: TextStyle(fontSize: 13, color: muted));
               }
               return Column(children: [
                 for (final r in rel)
@@ -2582,7 +2553,7 @@ class _AyahDetailPageState extends State<AyahDetailPage> {
                 ])),
           ],
           const SizedBox(height: 14),
-          Text('المصدر: $sname', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          Text('المصدر: $sname', style: const TextStyle(fontSize: 12, color: muted)),
         ]),
       ),
     );
@@ -2713,7 +2684,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                     ),
               filled: true,
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(radiusCardSmall), borderSide: BorderSide.none),
             ),
           ),
         ),
@@ -2822,7 +2793,7 @@ class _SurahSearchTabState extends State<_SurahSearchTab> {
             hintText: 'ابحث باسم السورة أو رقمها…',
             filled: true,
             border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                borderRadius: BorderRadius.circular(radiusCardSmall), borderSide: BorderSide.none),
           ),
           onChanged: (v) => setState(() => _q = v),
         ),
@@ -2843,12 +2814,12 @@ class _SurahSearchTabState extends State<_SurahSearchTab> {
                         child: Row(children: [
                           CircleAvatar(
                               radius: 22,
-                              backgroundColor: skyLight,
+                              backgroundColor: goldLight,
                               child: Text('${s.id}',
                                   style: const TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w800,
-                                      color: skyDeep))),
+                                      color: gold))),
                           const SizedBox(width: 14),
                           Expanded(
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2860,7 +2831,7 @@ class _SurahSearchTabState extends State<_SurahSearchTab> {
                                   style: const TextStyle(fontSize: 12)),
                             ]),
                           ),
-                          const Icon(Icons.chevron_left, color: Colors.grey),
+                          const Icon(Icons.chevron_left, color: muted),
                         ])),
                   );
                 },
@@ -2921,7 +2892,6 @@ class _FavsPageState extends State<FavsPage> {
                             ]),
                       ),
                     ])),
-                const Positioned(top: 0, left: 0, child: FloralCorner(size: 52)),
               ]),
             ),
             if (tags.isNotEmpty)
@@ -3324,7 +3294,7 @@ class _AssistantPageState extends State<AssistantPage> {
                   hintText: 'اسأل عن موضوع في القرآن…',
                   filled: true,
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                      borderRadius: BorderRadius.circular(radiusCard), borderSide: BorderSide.none),
                 ),
               ),
             ),
@@ -3348,7 +3318,7 @@ class _AssistantPageState extends State<AssistantPage> {
         child: Container(
           margin: const EdgeInsets.only(bottom: 12, left: 40),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(color: sky, borderRadius: BorderRadius.circular(18)),
+          decoration: BoxDecoration(color: brandPrimary, borderRadius: BorderRadius.circular(radiusCardSmall)),
           child: Text(m.text, style: const TextStyle(color: Colors.white, fontSize: 15)),
         ),
       );
@@ -3358,7 +3328,7 @@ class _AssistantPageState extends State<AssistantPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Theme.of(c).colorScheme.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(radiusCardSmall),
         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3389,19 +3359,20 @@ class _AssistantPageState extends State<AssistantPage> {
               child: ayahCard(c, a),
             ),
           const Text('المصدر: نص القرآن الكريم (المصحف العثماني، رواية حفص).',
-              style: TextStyle(fontSize: 12, color: Colors.grey)),
+              style: TextStyle(fontSize: 12, color: muted)),
           _relatedSection(c, m.related),
         ],
         if (m.kind == 4 && m.surahId != null) ...[
           const SizedBox(height: 8),
           Text('المصدر: ${surahVirtues[m.surahId]!.$2}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              style: const TextStyle(fontSize: 12, color: muted)),
           const SizedBox(height: 8),
-          FilledButton.tonalIcon(
+          PrimaryButton(
+            tonal: true,
+            label: 'فتح سورة ${Repo.i.surah(m.surahId!)?.nameAr ?? ''}',
+            icon: Icons.menu_book_rounded,
             onPressed: () => Navigator.push(
                 c, MaterialPageRoute(builder: (_) => SurahReaderPage(m.surahId!))),
-            icon: const Icon(Icons.menu_book_rounded),
-            label: Text('فتح سورة ${Repo.i.surah(m.surahId!)?.nameAr ?? ''}'),
           ),
         ],
         if (m.kind == 5) ...[
@@ -3438,7 +3409,7 @@ class _AssistantPageState extends State<AssistantPage> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(short, style: const TextStyle(fontSize: 14, height: 1.9)),
       const SizedBox(height: 4),
-      Text('المصدر: $name', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      Text('المصدر: $name', style: const TextStyle(fontSize: 12, color: muted)),
       const SizedBox(height: 8),
       TextButton.icon(
         onPressed: () =>
@@ -3458,7 +3429,7 @@ class _AssistantPageState extends State<AssistantPage> {
       const Text('آيات مشابهة', style: TextStyle(fontWeight: FontWeight.w800)),
       const SizedBox(height: 2),
       const Text('تشترك معها في ألفاظها وموضوعها.',
-          style: TextStyle(fontSize: 12, color: Colors.grey)),
+          style: TextStyle(fontSize: 12, color: muted)),
       const SizedBox(height: 8),
       for (final a in rel)
         Padding(
@@ -3507,14 +3478,14 @@ class _WirdPlannerCardState extends State<_WirdPlannerCard> {
                 style: const TextStyle(fontSize: 13, color: gold)),
             const SizedBox(height: 4),
             const Text('التقديرات تقريبية لقراءة متأنية.',
-                style: TextStyle(fontSize: 11, color: Colors.grey)),
+                style: TextStyle(fontSize: 11, color: muted)),
             const SizedBox(height: 10),
             Row(children: [
-              FilledButton.tonalIcon(
+              PrimaryButton(tonal: true,
                 onPressed: () => Navigator.push(
                     c, MaterialPageRoute(builder: (_) => const WirdPage())),
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('ابدأ الورد'),
+                icon: Icons.play_arrow_rounded,
+                label: 'ابدأ الورد',
               ),
               const SizedBox(width: 8),
               TextButton.icon(
@@ -3592,9 +3563,7 @@ class _RecitationsPageState extends State<RecitationsPage>
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
                   if (isDefault)
-                    const Chip(
-                        label: Text('القارئ الافتراضي', style: TextStyle(fontSize: 10)),
-                        backgroundColor: mintLight),
+                    const StatusChip(label: 'القارئ الافتراضي', tone: StatusTone.ok),
                 ]),
                 const SizedBox(height: 2),
                 const Text('رواية حفص عن عاصم',
@@ -3603,7 +3572,7 @@ class _RecitationsPageState extends State<RecitationsPage>
             ),
             IconButton(
               icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded,
-                  color: fav ? gold : Colors.grey),
+                  color: fav ? gold : muted),
               tooltip: fav ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة',
               onPressed: () => setState(() => user.toggleReciter(r.id)),
             ),
@@ -3671,7 +3640,7 @@ class _RecitationsPageState extends State<RecitationsPage>
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Text(header,
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                style: const TextStyle(fontSize: 12, color: muted)),
           ),
         ],
         for (final r in items) _row(r),
@@ -3712,7 +3681,7 @@ class TafsirBrowserPage extends StatelessWidget {
                         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                   ),
                   Text('${s.ayahCount} آية', style: const TextStyle(fontSize: 12)),
-                  const Icon(Icons.chevron_left, color: Colors.grey),
+                  const Icon(Icons.chevron_left, color: muted),
                 ])),
           );
         },
@@ -3780,7 +3749,7 @@ class _TafsirSurahPageState extends State<TafsirSurahPage> {
                           style: const TextStyle(fontSize: 14, height: 1.9)),
                       const SizedBox(height: 4),
                       Text('المصدر: $sname',
-                          style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                          style: const TextStyle(fontSize: 11, color: muted)),
                     ])),
               );
             },
@@ -3811,7 +3780,7 @@ class IjazPage extends StatelessWidget {
                     c, MaterialPageRoute(builder: (_) => IjazDetailPage(e.id))),
                 child: Row(children: [
                   const CircleAvatar(
-                      backgroundColor: Color(0xFFFFF3CD),
+                      backgroundColor: goldLight,
                       child: Icon(Icons.lightbulb_rounded, color: gold)),
                   const SizedBox(width: 12),
                   Expanded(
@@ -3853,12 +3822,12 @@ class IjazDetailPage extends StatelessWidget {
         const SizedBox(height: 14),
         softCard(context, child: Text(e.text, style: const TextStyle(fontSize: 15, height: 2.0))),
         const SizedBox(height: 14),
-        Text('المصدر: ${e.source}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Text('المصدر: ${e.source}', style: const TextStyle(fontSize: 12, color: muted)),
         const SizedBox(height: 6),
         const Text(
             'هذه المقالات مختصرة من مصادر معروفة في الإعجاز العلمي، وتعرض الآية كما هي دون زيادة. '
             'ليست فتوى ولا تفسيرًا ملزمًا.',
-            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.8)),
+            style: TextStyle(fontSize: 12, color: muted, height: 1.8)),
       ]),
     );
   }
@@ -3931,33 +3900,35 @@ class _QiraatPageState extends State<QiraatPage> {
         const SizedBox(height: 12),
         softCard(context, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const CircleAvatar(backgroundColor: Color(0xFFFFF3CD), child: Icon(Icons.auto_stories_rounded, color: gold)),
+            const CircleAvatar(backgroundColor: goldLight, child: Icon(Icons.auto_stories_rounded, color: gold)),
             const SizedBox(width: 12),
             const Expanded(
               child: Text('ورش عن نافع', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             ),
-            Chip(label: Text(_downloaded ? 'مثبتة' : 'حزمة اختيارية')),
+            StatusChip(
+                label: _downloaded ? 'مثبتة' : 'حزمة اختيارية',
+                tone: _downloaded ? StatusTone.ok : StatusTone.neutral),
           ]),
           const SizedBox(height: 10),
           const Text('نص رواية ورش كاملاً (6,214 آية) مع عرض رقم كل آية في حفص بجانبها. '
               'يُنزَّل مرة واحدة ويبقى دون إنترنت.',
               style: TextStyle(fontSize: 13, height: 1.8)),
           const SizedBox(height: 6),
-          const Text(WarshService.attribution, style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+          const Text(WarshService.attribution, style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
           const SizedBox(height: 12),
           if (_downloading)
             Column(children: [
-              LinearProgressIndicator(value: _progress),
+              TilawaProgressBar(value: _progress, color: brandPrimary),
               const SizedBox(height: 8),
               Text('جارٍ تنزيل حزمة ورش… ${(_progress * 100).round()}٪'),
             ])
           else if (_downloaded)
             Row(children: [
-              FilledButton.tonalIcon(
+              PrimaryButton(tonal: true,
                 onPressed: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const WarshReaderPage())),
-                icon: const Icon(Icons.menu_book_rounded),
-                label: const Text('فتح قارئ ورش'),
+                icon: Icons.menu_book_rounded,
+                label: 'فتح قارئ ورش',
               ),
               const SizedBox(width: 8),
               TextButton.icon(
@@ -3972,17 +3943,17 @@ class _QiraatPageState extends State<QiraatPage> {
               ),
             ])
           else
-            FilledButton.icon(
+            PrimaryButton(
               onPressed: _download,
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('تنزيل نص ورش (~1.6 MB)'),
+              icon: Icons.download_rounded,
+              label: 'تنزيل نص ورش (~1.6 MB)',
             ),
         ])),
         const SizedBox(height: 12),
         const Text(
             'ملاحظة: ترقيم آيات ورش يختلف عن ترقيم حفص في بعض السور (مثلاً: الفاتحة 7 آيات في حفص و6 في ورش، '
             'لأن البسملة لا تُعدّ آية عند ورش). يُعرض مقابل كل آية ورش رقمها في حفص.',
-            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.8)),
+            style: TextStyle(fontSize: 12, color: muted, height: 1.8)),
       ]),
     );
   }
@@ -4020,16 +3991,16 @@ class WarshReaderPage extends StatelessWidget {
                     child: Row(children: [
                       CircleAvatar(
                           radius: 22,
-                          backgroundColor: tealLight,
+                          backgroundColor: goldLight,
                           child: Text('${w.id}',
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: teal))),
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: gold))),
                       const SizedBox(width: 14),
                       Expanded(
                         child: Text(s?.nameAr ?? 'سورة ${w.id}',
                             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                       ),
                       Text('${w.verses.length} آية', style: const TextStyle(fontSize: 12)),
-                      const Icon(Icons.chevron_left, color: Colors.grey),
+                      const Icon(Icons.chevron_left, color: muted),
                     ])),
               );
             },
@@ -4058,9 +4029,9 @@ class WarshSurahPage extends StatelessWidget {
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               CircleAvatar(
                 radius: 17,
-                backgroundColor: tealLight,
+                backgroundColor: goldLight,
                 child: Text('${v.id}',
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: teal)),
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: gold)),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -4116,11 +4087,7 @@ class WirdPage extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700, color: gold)),
               ]),
               const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                    value: progress, minHeight: 8, backgroundColor: tealLight, color: teal),
-              ),
+              TilawaProgressBar(value: progress, color: teal),
               const SizedBox(height: 8),
               Text(done
                   ? 'أتممت ختمة كاملة — تقبّل الله منك.'
@@ -4129,20 +4096,20 @@ class WirdPage extends StatelessWidget {
             ])),
             const SizedBox(height: 14),
             if (done)
-              FilledButton.icon(
+              PrimaryButton(
                 onPressed: () {
                   user.resetKhatmah();
                   ScaffoldMessenger.of(c).showSnackBar(
                       const SnackBar(content: Text('بدأت ختمة جديدة — بالتوفيق')));
                 },
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('بدء ختمة جديدة'),
+                icon: Icons.refresh_rounded,
+                label: 'بدء ختمة جديدة',
               )
             else ...[
               Row(children: [
                 const Text('ورد اليوم', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                 const SizedBox(width: 8),
-                Chip(label: Text(_wirdLabel)),
+                StatusChip(label: _wirdLabel, tone: StatusTone.info),
                 const Spacer(),
                 Text('${ayahs.length} آية', style: const TextStyle(fontSize: 12, color: gold)),
               ]),
@@ -4150,7 +4117,7 @@ class WirdPage extends StatelessWidget {
               Text('من الربع $q إلى الربع $end — اضغط أي آية لقراءتها، وعند الانتهاء اضغط «أتممت الورد».',
                   style: const TextStyle(fontSize: 13, height: 1.7)),
               const SizedBox(height: 10),
-              FilledButton.icon(
+              PrimaryButton(
                 onPressed: () async {
                   await user.completeWird();
                   if (c.mounted) {
@@ -4158,8 +4125,8 @@ class WirdPage extends StatelessWidget {
                         const SnackBar(content: Text('تقبّل الله — تم تسجيل ورد اليوم')));
                   }
                 },
-                icon: const Icon(Icons.check_circle_rounded),
-                label: const Text('أتممت الورد'),
+                icon: Icons.check_circle_rounded,
+                label: 'أتممت الورد',
               ),
               const SizedBox(height: 14),
               for (final a in ayahs)
@@ -4237,10 +4204,10 @@ class _LibraryPageState extends State<LibraryPage> {
         softCard(context, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('سلامة المكتبة', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 10),
-          FilledButton.tonalIcon(
+          PrimaryButton(tonal: true,
             onPressed: _runCheck,
-            icon: const Icon(Icons.verified_rounded),
-            label: const Text('فحص السلامة (quick_check + SHA-256)'),
+            icon: Icons.verified_rounded,
+            label: 'فحص السلامة (quick_check + SHA-256)',
           ),
           if (_check != null) ...[
             const SizedBox(height: 10),
@@ -4411,7 +4378,7 @@ class _SettingsPageState extends State<SettingsPage> {
       body: AnimatedBuilder(
         animation: settings,
         builder: (c, _) => ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
-          const Text('المظهر', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'المظهر'),
           const SizedBox(height: 8),
           softCard(c, child: Column(children: [
             SwitchListTile(
@@ -4434,7 +4401,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ])),
           const SizedBox(height: 18),
-          const Text('القراءة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'القراءة'),
           const SizedBox(height: 8),
           softCard(c, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
@@ -4475,7 +4442,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ])),
           const SizedBox(height: 18),
-          const Text('التلاوة الصوتية', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'التلاوة الصوتية'),
           const SizedBox(height: 8),
           softCard(c, child: ListTile(
             leading: const CircleAvatar(
@@ -4489,7 +4456,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 c, MaterialPageRoute(builder: (_) => const RecitationsPage())),
           )),
           const SizedBox(height: 18),
-          const Text('اللغة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'اللغة'),
           const SizedBox(height: 8),
           softCard(c, child: const ListTile(
             leading: CircleAvatar(
@@ -4499,7 +4466,7 @@ class _SettingsPageState extends State<SettingsPage> {
             contentPadding: EdgeInsets.zero,
           )),
           const SizedBox(height: 18),
-          const Text('تذكير الورد', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'تذكير الورد'),
           const SizedBox(height: 8),
           softCard(c, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             SwitchListTile(
@@ -4536,11 +4503,11 @@ class _SettingsPageState extends State<SettingsPage> {
               ]),
               const SizedBox(height: 8),
               const Text('عند الضغط على الإشعار يفتح التطبيق على أول آية في وردك مع زر استماع.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+                  style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
             ],
           ])),
           const SizedBox(height: 18),
-          const Text('المكتبة والقراءات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'المكتبة والقراءات'),
           const SizedBox(height: 8),
           softCard(c, padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8), child: Column(children: [
             ListTile(
@@ -4577,7 +4544,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ])),
           const SizedBox(height: 18),
-          const Text('بياناتك', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SectionHeader(title: 'بياناتك'),
           const SizedBox(height: 8),
           softCard(c, padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8), child: Column(children: [
             ListTile(
@@ -4636,8 +4603,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ]),
               ),
             ])),
-            const Positioned(top: 0, left: 0, child: FloralCorner(size: 56)),
-          ]),
+            ]),
           // Pro: إسناد البحث المعجمي — يظهر فقط إن كانت جداول المعجم
           // مثبتة فعلاً في المكتبة (وهي كذلك في هذا الإصدار).
           if (Repo.i.lexiconMeta().isNotEmpty) ...[
