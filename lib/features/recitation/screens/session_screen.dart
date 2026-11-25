@@ -26,6 +26,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
 import '../models.dart';
 import '../progress_store.dart';
 import '../session_logic.dart';
@@ -274,11 +276,11 @@ class _SessionScreenState extends State<SessionScreen> {
   Color _wordBackground(RefWord ref) {
     switch (_tracker.markOf(ref)) {
       case WordMark.matched:
-        return Colors.green.shade200;
+        return wordMatchedBg;
       case WordMark.error:
-        return Colors.red.shade200;
+        return wordErrorBg;
       case WordMark.needsReview:
-        return Colors.yellow.shade200;
+        return wordReviewBg;
       case WordMark.notReviewed:
         return Colors.transparent;
     }
@@ -329,18 +331,11 @@ class _SessionScreenState extends State<SessionScreen> {
         body: _phase == SessionPhase.failed
             ? _buildError()
             : ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(spacePage),
                 children: [
                   if (_error != null)
-                    Card(
-                      color: Colors.red.shade50,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          '$_error\nأنهِ الجلسة وأعد المحاولة.',
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ),
+                    ErrorCard(
+                      message: '$_error\nأنهِ الجلسة وأعد المحاولة.',
                     ),
                   if (_error != null) const SizedBox(height: 12),
                   _buildHeader(caps),
@@ -359,7 +354,7 @@ class _SessionScreenState extends State<SessionScreen> {
                   const Text(
                     'تصحيح الكلمات فقط — المحرك لا يقيّم التجويد أو مخارج '
                     'الحروف. التردد أو الصمت القصير لا يُحسب خطأً.',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(color: muted),
                   ),
                 ],
               ),
@@ -369,18 +364,9 @@ class _SessionScreenState extends State<SessionScreen> {
 
   Widget _buildError() {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(spacePage),
       children: [
-        Card(
-          color: Colors.red.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              _error ?? 'تعذّر بدء الجلسة.',
-              style: const TextStyle(color: Colors.red, fontSize: 16),
-            ),
-          ),
-        ),
+        ErrorCard(message: _error ?? 'تعذّر بدء الجلسة.'),
         const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: () => Navigator.pop(context),
@@ -394,25 +380,28 @@ class _SessionScreenState extends State<SessionScreen> {
   Widget _buildHeader(EngineCapabilities? caps) {
     final recording = _phase == SessionPhase.recording;
     final paused = _phase == SessionPhase.paused;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'سورة ${surahName(widget.passage.surah)} — الآيات '
-              '${widget.passage.fromAyah}–${widget.passage.toAyah}',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text('الوضع: ${widget.mode.label}'),
-            Text(
-                'النموذج: ${widget.tier} (${caps?.modelVersion ?? 'يُحمَّل…'})'),
-            Text(
-                'المحرك: ${caps?.backend ?? '—'} • الميكروفون: مسموح'),
-            const SizedBox(height: 8),
-            Row(
+    return TilawaCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'سورة ${surahName(widget.passage.surah)} — الآيات '
+            '${widget.passage.fromAyah}–${widget.passage.toAyah}',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text('الوضع: ${widget.mode.label}',
+              style: const TextStyle(color: muted)),
+          Text(
+            'النموذج: ${widget.tier} (${caps?.modelVersion ?? 'يُحمَّل…'})',
+            style: const TextStyle(color: muted),
+          ),
+          Text(
+            'المحرك: ${caps?.backend ?? '—'} • الميكروفون: مسموح',
+            style: const TextStyle(color: muted),
+          ),
+          const SizedBox(height: 8),
+          Row(
               children: [
                 AnimatedOpacity(
                   opacity: recording ? (_pulse ? 1.0 : 0.25) : 1.0,
@@ -423,10 +412,10 @@ class _SessionScreenState extends State<SessionScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: recording
-                          ? Colors.red
+                          ? error
                           : paused
-                              ? Colors.amber
-                              : Colors.grey,
+                              ? warning
+                              : muted,
                     ),
                   ),
                 ),
@@ -450,11 +439,10 @@ class _SessionScreenState extends State<SessionScreen> {
                   _lastPositionWall == null
                       ? 'المحرك يستمع… بانتظار الصوت.'
                       : 'المحرك يستمع ويحلّل التلاوة.',
-                  style: const TextStyle(color: Colors.grey),
+                  style: const TextStyle(color: muted),
                 ),
               ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -464,44 +452,45 @@ class _SessionScreenState extends State<SessionScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        FilledButton.tonalIcon(
+        PrimaryButton(
+          tonal: true,
           onPressed: () => setState(() => _hidden = !_hidden),
-          icon: Icon(_hidden ? Icons.visibility : Icons.visibility_off),
-          label: Text(_hidden ? 'إظهار الآيات' : 'إخفاء الآيات'),
+          icon: _hidden ? Icons.visibility : Icons.visibility_off,
+          label: _hidden ? 'إظهار الآيات' : 'إخفاء الآيات',
         ),
         const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
               child: _phase == SessionPhase.recording
-                  ? FilledButton.icon(
+                  ? PrimaryButton(
                       onPressed: _pause,
-                      icon: const Icon(Icons.pause),
-                      label: const Text('إيقاف مؤقت'),
+                      icon: Icons.pause,
+                      label: 'إيقاف مؤقت',
                     )
                   : _phase == SessionPhase.paused
-                      ? FilledButton.icon(
+                      ? PrimaryButton(
                           onPressed: _resume,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('استئناف'),
+                          icon: Icons.play_arrow,
+                          label: 'استئناف',
                         )
-                      : FilledButton.icon(
+                      : PrimaryButton(
                           onPressed: null,
-                          icon: const Icon(Icons.mic),
-                          label: Text(starting
+                          icon: Icons.mic,
+                          label: starting
                               ? 'جارٍ بدء الجلسة…'
-                              : 'الجلسة منتهية'),
+                              : 'الجلسة منتهية',
                         ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: OutlinedButton.icon(
+              child: SecondaryButton(
                 onPressed: (_phase == SessionPhase.recording ||
                         _phase == SessionPhase.paused)
                     ? _end
                     : null,
-                icon: const Icon(Icons.stop),
-                label: const Text('إنهاء الجلسة'),
+                icon: Icons.stop,
+                label: 'إنهاء الجلسة',
               ),
             ),
           ],
@@ -515,27 +504,39 @@ class _SessionScreenState extends State<SessionScreen> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        Chip(
-          label: Text(
-              'التتبع: ${_tracker.currentState.name} • الثقة: '
-              '${(_tracker.currentConfidence * 100).toStringAsFixed(0)}%'),
+        StatusChip(
+          tone: StatusTone.neutral,
+          label: 'التتبع: ${_tracker.currentState.name} • الثقة: '
+              '${(_tracker.currentConfidence * 100).toStringAsFixed(0)}%',
         ),
-        Chip(
-            label: Text(
-                'كلمات مطابقة: ${_tracker.matched.length}')),
-        Chip(
-            label: Text(
-                'أخطاء مؤكدة: ${_tracker.confirmedErrors.length}')),
-        Chip(
-            label: Text(
-                'تحتاج مراجعة: ${_tracker.needsReview.length}')),
+        StatusChip(
+          tone: StatusTone.ok,
+          label: 'كلمات مطابقة: ${_tracker.matched.length}',
+        ),
+        StatusChip(
+          tone: StatusTone.error,
+          label: 'أخطاء مؤكدة: ${_tracker.confirmedErrors.length}',
+        ),
+        StatusChip(
+          tone: StatusTone.warn,
+          label: 'تحتاج مراجعة: ${_tracker.needsReview.length}',
+        ),
         if (widget.loadMs != null)
-          Chip(
-              label: Text(
-                  'تحميل النموذج: ${(widget.loadMs! / 1000).toStringAsFixed(1)} ث')),
+          StatusChip(
+            tone: StatusTone.info,
+            label:
+                'تحميل النموذج: ${(widget.loadMs! / 1000).toStringAsFixed(1)} ث',
+          ),
         if (_lastLatencyMs != null)
-          Chip(label: Text('آخر تظليل: ${_lastLatencyMs}ms')),
-        if (_segments > 1) Chip(label: Text('المقاطع: $_segments')),
+          StatusChip(
+            tone: StatusTone.info,
+            label: 'آخر تظليل: ${_lastLatencyMs}ms',
+          ),
+        if (_segments > 1)
+          StatusChip(
+            tone: StatusTone.info,
+            label: 'المقاطع: $_segments',
+          ),
       ],
     );
   }
@@ -560,26 +561,26 @@ class _SessionScreenState extends State<SessionScreen> {
           tooltip: 'تكبير النص',
         ),
         const Spacer(),
-        OutlinedButton.icon(
+        SecondaryButton(
           onPressed: _focusedAyah > widget.passage.fromAyah
               ? () {
                   setState(() => _focusedAyah--);
                   _scrollToAyah(_focusedAyah);
                 }
               : null,
-          icon: const Icon(Icons.arrow_upward),
-          label: const Text('الآية السابقة'),
+          icon: Icons.arrow_upward,
+          label: 'الآية السابقة',
         ),
         const SizedBox(width: 8),
-        OutlinedButton.icon(
+        SecondaryButton(
           onPressed: _focusedAyah < widget.passage.toAyah
               ? () {
                   setState(() => _focusedAyah++);
                   _scrollToAyah(_focusedAyah);
                 }
               : null,
-          icon: const Icon(Icons.arrow_downward),
-          label: const Text('الآية التالية'),
+          icon: Icons.arrow_downward,
+          label: 'الآية التالية',
         ),
       ],
     );
@@ -594,12 +595,12 @@ class _SessionScreenState extends State<SessionScreen> {
       out.add(
         Card(
           key: _ayahKeys[ayah],
-          shape: isCurrent
-              ? RoundedRectangleBorder(
-                  side: const BorderSide(color: Colors.teal, width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                )
-              : null,
+          shape: RoundedRectangleBorder(
+            side: isCurrent
+                ? const BorderSide(color: brandPrimary, width: 2)
+                : BorderSide.none,
+            borderRadius: BorderRadius.circular(radiusCardSmall),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -612,7 +613,9 @@ class _SessionScreenState extends State<SessionScreen> {
                     Text(
                       reviewed ? 'تمت مراجعتها' : 'لم تُراجَع بعد',
                       style: TextStyle(
-                        color: reviewed ? Colors.green.shade700 : Colors.grey,
+                        color: reviewed ? success : muted,
+                        fontWeight:
+                            reviewed ? FontWeight.w700 : FontWeight.normal,
                       ),
                     ),
                   ],
@@ -621,7 +624,7 @@ class _SessionScreenState extends State<SessionScreen> {
                 if (_hidden)
                   const Text(
                     'الآية مخفية — سمّع غيباً، ثم أظهرها للمراجعة.',
-                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                    style: TextStyle(color: muted, fontSize: 16),
                   )
                 else
                   Wrap(
@@ -640,7 +643,7 @@ class _SessionScreenState extends State<SessionScreen> {
                             decoration: BoxDecoration(
                               color: _wordBackground(ref),
                               border: isCurrentWord
-                                  ? Border.all(color: Colors.teal, width: 2)
+                                  ? Border.all(color: brandPrimary, width: 2)
                                   : null,
                               borderRadius: BorderRadius.circular(4),
                             ),
@@ -684,7 +687,7 @@ class _SessionScreenState extends State<SessionScreen> {
           }
           final conf = _tracker.confidenceByWord[m.location];
           return ListTile(
-            leading: const Icon(Icons.error, color: Colors.red),
+            leading: const Icon(Icons.error, color: error),
             title: Text(
               '${errorClassLabel(m.errorClass)} — الآية ${m.location.ayah}، '
               'الكلمة ${m.location.word}: «$correct»',
@@ -704,7 +707,7 @@ class _SessionScreenState extends State<SessionScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: _tracker.notes
           .map((n) => ListTile(
-                leading: const Icon(Icons.help_outline, color: Colors.grey),
+                leading: const Icon(Icons.help_outline, color: muted),
                 title: Text(n),
               ))
           .toList(),

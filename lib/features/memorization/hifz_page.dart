@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme.dart';
+import '../../core/widgets.dart';
 import '../../db.dart';
 import 'hifz_store.dart';
 
@@ -25,51 +26,57 @@ class HifzPage extends StatelessWidget {
         builder: (c, _) {
           final plan = store.activePlan;
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            padding: const EdgeInsets.fromLTRB(spacePage, 8, spacePage, 24),
             children: [
               const _SelfAssessmentNote(),
-              const SizedBox(height: 14),
+              const SizedBox(height: spaceSection),
               if (plan == null) ...[
                 const Text(
                   'لا توجد خطة حفظ نشطة بعد. أنشئ خطتك الأولى — '
                   'حدّد نطاق السور والآيات وهدفك اليومي.',
-                  style: TextStyle(fontSize: 14, height: 1.8),
+                  style: TextStyle(fontSize: 14, height: 1.8, color: muted),
                 ),
                 const SizedBox(height: 12),
-                FilledButton.icon(
+                PrimaryButton(
                   onPressed: () => _openCreatePlan(c),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('إنشاء خطة حفظ'),
+                  icon: Icons.add_rounded,
+                  label: 'إنشاء خطة حفظ',
                 ),
               ] else ...[
                 _PlanProgressCard(store: store, plan: plan),
-                const SizedBox(height: 14),
+                const SizedBox(height: spaceSection),
                 _TodaySection(store: store, plan: plan),
-                const SizedBox(height: 14),
+                const SizedBox(height: spaceSection),
                 _DueSection(store: store, plan: plan),
-                const SizedBox(height: 14),
+                const SizedBox(height: spaceSection),
                 _StatsCard(store: store),
-                const SizedBox(height: 14),
-                OutlinedButton.icon(
+                const SizedBox(height: spaceSection),
+                SecondaryButton(
                   onPressed: () => _openCreatePlan(c),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('خطة جديدة (توقف الحالية)'),
+                  icon: Icons.add_rounded,
+                  label: 'خطة جديدة (توقف الحالية)',
                 ),
               ],
               if (store.plans.length > 1) ...[
                 const SizedBox(height: 18),
-                const Text('خططك السابقة',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                const SectionHeader(title: 'خططك السابقة'),
                 const SizedBox(height: 8),
                 for (final p in store.plans.where((p) => !p.active))
-                  ListTile(
-                    title: Text(p.name),
-                    subtitle: Text(
-                        'من سورة ${Repo.i.surah(p.startSurah)?.nameAr ?? ''} '
-                        'إلى سورة ${Repo.i.surah(p.endSurah)?.nameAr ?? ''}'),
-                    trailing: TextButton(
-                      onPressed: () => store.setPlanActive(p.id, true),
-                      child: const Text('تفعيل'),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: TilawaCard(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: ListTile(
+                        title: Text(p.name),
+                        subtitle: Text(
+                            'من سورة ${Repo.i.surah(p.startSurah)?.nameAr ?? ''} '
+                            'إلى سورة ${Repo.i.surah(p.endSurah)?.nameAr ?? ''}'),
+                        trailing: TextButton(
+                          onPressed: () => store.setPlanActive(p.id, true),
+                          child: const Text('تفعيل'),
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -89,34 +96,12 @@ class HifzPage extends StatelessWidget {
   }
 }
 
-/// بطاقة محلية بهوية التطبيق (لا تعتمد على softCard في main.dart
-/// تفادياً لحلقة استيراد).
-Widget _hifzCard(BuildContext c, {required Widget child}) {
-  final dark = Theme.of(c).brightness == Brightness.dark;
-  return Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: dark ? const Color(0xFF1C2B33) : Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      boxShadow: [
-        BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.25 : 0.06),
-            blurRadius: 14,
-            offset: const Offset(0, 4)),
-      ],
-    ),
-    child: child,
-  );
-}
-
 /// عرض آية واحدة من قاعدة البيانات حرفياً (خط أميري، بلا تحويل للنص).
 Widget _ayahTile(Ayah a) {
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(a.text,
-          style: const TextStyle(
-              fontSize: 17, height: 1.9, fontWeight: FontWeight.w600, fontFamily: 'Amiri')),
+      AyahText(text: a.text, fontSize: 17, height: 1.9),
       const SizedBox(height: 6),
       Text('سورة ${a.surahName} • آية ${a.ayah}',
           style: const TextStyle(fontSize: 12, color: gold)),
@@ -125,31 +110,15 @@ Widget _ayahTile(Ayah a) {
 }
 
 /// تنبيه صريح في الواجهة: لا تصحيح آلي هنا — التقييم ذاتي.
+/// النص حرفي كما كان؛ أُعيد تقديمه فقط عبر InfoNote (خلفية goldLight).
 class _SelfAssessmentNote extends StatelessWidget {
   const _SelfAssessmentNote();
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: goldLight,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline_rounded, color: gold),
-          SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'التقييم هنا ذاتي: أنت من يقيّم حفظك (سهل / صعب / أعد) بعد '
-              'التسميع على نفسك أو على معلمك. لا يوجد تصحيح صوتي آلي في '
-              'هذه الوحدة — محرك التسميع الذكي غير مدمج بعد.',
-              style: TextStyle(fontSize: 12.5, height: 1.7),
-            ),
-          ),
-        ],
-      ),
+    return const InfoNote(
+      message: 'التقييم هنا ذاتي: أنت من يقيّم حفظك (سهل / صعب / أعد) بعد '
+          'التسميع على نفسك أو على معلمك. لا يوجد تصحيح صوتي آلي في '
+          'هذه الوحدة — محرك التسميع الذكي غير مدمج بعد.',
     );
   }
 }
@@ -164,32 +133,34 @@ class _PlanProgressCard extends StatelessWidget {
     final p = store.progressOf(plan);
     final s1 = Repo.i.surah(plan.startSurah);
     final s2 = Repo.i.surah(plan.endSurah);
-    return _hifzCard(context,
+    return TilawaCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Icon(Icons.menu_book_rounded, color: teal),
+            const CircleAvatar(
+              radius: 20,
+              backgroundColor: tealLight,
+              child: Icon(Icons.menu_book_rounded, color: teal, size: 22),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(plan.name,
                   style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             ),
             Text('${(p.ratio * 100).round()}٪',
-                style: const TextStyle(fontWeight: FontWeight.w700, color: gold)),
+                style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: brandPrimary)),
           ]),
           const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-                value: p.ratio, minHeight: 8,
-                backgroundColor: tealLight, color: teal),
-          ),
+          TilawaProgressBar(value: p.ratio, color: teal),
           const SizedBox(height: 8),
           Text(
             'حفظت ${p.memorized} من ${p.total} آية — '
             'من سورة ${s1?.nameAr ?? ''} آية ${plan.startAyah} '
             'إلى سورة ${s2?.nameAr ?? ''} آية ${plan.endAyah}. '
             'هدفك اليومي: ${plan.dailyAyahs} ${plan.dailyAyahs == 1 ? 'آية' : 'آيات'}.',
-            style: const TextStyle(fontSize: 13, height: 1.7),
+            style: const TextStyle(fontSize: 13, height: 1.7, color: muted),
           ),
         ]));
   }
@@ -204,8 +175,8 @@ class _TodaySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final fresh = store.todaysNew(plan);
     if (fresh.isEmpty) {
-      return _hifzCard(context,
-          child: const Text('أتممت كل آيات نطاق هذه الخطة — تقبّل الله. '
+      return const TilawaCard(
+          child: Text('أتممت كل آيات نطاق هذه الخطة — تقبّل الله. '
               'يمكنك إنشاء خطة جديدة لنطاق آخر.',
               style: TextStyle(fontSize: 13, height: 1.7)));
     }
@@ -214,14 +185,14 @@ class _TodaySection extends StatelessWidget {
         const Text('حفظ اليوم',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(width: 8),
-        Chip(label: Text('${fresh.length} آية')),
+        StatusChip(label: '${fresh.length} آية', tone: StatusTone.info),
       ]),
       const SizedBox(height: 6),
       const Text('اقرأ الآيات من المصحف واحفظها، ثم اضغط «حفظتها» '
           'ليُجدول التطبيق أول مراجعة لها بعد 3 أيام.',
-          style: TextStyle(fontSize: 13, height: 1.7)),
+          style: TextStyle(fontSize: 13, height: 1.7, color: muted)),
       const SizedBox(height: 10),
-      FilledButton.icon(
+      PrimaryButton(
         onPressed: () async {
           await store.markMemorized(
               plan, fresh.map((a) => a.id).toList());
@@ -230,14 +201,14 @@ class _TodaySection extends StatelessWidget {
                 content: Text('سُجّل حفظ اليوم — ستُراجَع بعد 3 أيام إن شاء الله')));
           }
         },
-        icon: const Icon(Icons.check_circle_rounded),
-        label: const Text('حفظتها'),
+        icon: Icons.check_circle_rounded,
+        label: 'حفظتها',
       ),
       const SizedBox(height: 14),
       for (final a in fresh)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: _hifzCard(context, child: _ayahTile(a)),
+          child: TilawaCard(child: _ayahTile(a)),
         ),
     ]);
   }
@@ -256,12 +227,14 @@ class _DueSection extends StatelessWidget {
         const Text('مراجعة اليوم',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(width: 8),
-        Chip(label: Text(due.isEmpty ? 'لا شيء مستحق' : '${due.length} آية')),
+        StatusChip(
+            label: due.isEmpty ? 'لا شيء مستحق' : '${due.length} آية',
+            tone: due.isEmpty ? StatusTone.neutral : StatusTone.warn),
       ]),
       const SizedBox(height: 10),
       if (due.isEmpty)
         const Text('لا مراجعات مستحقة اليوم.',
-            style: TextStyle(fontSize: 13, height: 1.7))
+            style: TextStyle(fontSize: 13, height: 1.7, color: muted))
       else
         for (final a in due)
           Padding(
@@ -283,18 +256,27 @@ class _DueAyahCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final item = store.items[ayah.id];
     final status = item?.statusOn(DateTime.now());
-    return _hifzCard(context,
+    // نغمة شارة الحالة من مستوى الحفظ الحالي فقط (عرض تقديمي) —
+    // لا تغيير في منطق التقييم أو الجدولة.
+    final statusTone = switch (status) {
+      HifzStatus.urgent => StatusTone.error,
+      HifzStatus.mastered => StatusTone.ok,
+      HifzStatus.reviewing => StatusTone.info,
+      _ => StatusTone.neutral,
+    };
+    return TilawaCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _ayahTile(ayah),
           const SizedBox(height: 8),
           Row(children: [
-            if (status != null) Chip(label: Text(status.label)),
+            if (status != null)
+              StatusChip(label: status.label, tone: statusTone),
             const SizedBox(width: 6),
             if (item != null)
               Expanded(
                 child: Text(
                     'الفاصل الحالي: ${item.intervalDays} ${item.intervalDays == 1 ? 'يوم' : 'أيام'} — قيّم حفظك لتُجدول المراجعة التالية.',
-                    style: const TextStyle(fontSize: 12)),
+                    style: const TextStyle(fontSize: 12, color: muted)),
               ),
           ]),
           const SizedBox(height: 8),
@@ -303,23 +285,23 @@ class _DueAyahCard extends StatelessWidget {
           const SizedBox(height: 8),
           Row(children: [
             Expanded(
-              child: OutlinedButton(
+              child: SecondaryButton(
                 onPressed: () => store.reviewAyah(plan, ayah.id, HifzRating.again),
-                child: const Text('أعد'),
+                label: 'أعد',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: OutlinedButton(
+              child: SecondaryButton(
                 onPressed: () => store.reviewAyah(plan, ayah.id, HifzRating.hard),
-                child: const Text('صعب'),
+                label: 'صعب',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: FilledButton(
+              child: PrimaryButton(
                 onPressed: () => store.reviewAyah(plan, ayah.id, HifzRating.easy),
-                child: const Text('سهل'),
+                label: 'سهل',
               ),
             ),
           ]),
@@ -333,21 +315,59 @@ class _StatsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // كل القيم من store.stats(days: 7) — سجل المستخدم الفعلي فقط،
+    // بلا أي رقم مُخترع أو من التصميم المرجعي.
     final s = store.stats(days: 7);
-    return _hifzCard(context,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Icon(Icons.bar_chart_rounded, color: sky),
-            SizedBox(width: 8),
-            Text('آخر 7 أيام — من سجلك أنت فقط',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          ]),
-          const SizedBox(height: 10),
-          Text('مراجعات: ${s.total} — سهل: ${s.easy}، صعب: ${s.hard}، أعد: ${s.again}.',
-              style: const TextStyle(fontSize: 13, height: 1.7)),
-          Text('أيام متتالية راجعت فيها: ${s.streakDays}.',
-              style: const TextStyle(fontSize: 13, height: 1.7)),
-        ]));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Row(children: [
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: skyLight,
+          child: Icon(Icons.bar_chart_rounded, color: skyDeep, size: 22),
+        ),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text('آخر 7 أيام — من سجلك أنت فقط',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      GridView.count(
+        crossAxisCount: 3,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 0.9,
+        children: [
+          StatTile(
+              value: '${s.total}',
+              label: 'مراجعات',
+              color: brandPrimary,
+              icon: Icons.bar_chart_rounded),
+          StatTile(
+              value: '${s.easy}',
+              label: 'سهل',
+              color: success,
+              icon: Icons.check_circle_rounded),
+          StatTile(
+              value: '${s.hard}',
+              label: 'صعب',
+              color: warning,
+              icon: Icons.trending_up_rounded),
+          StatTile(
+              value: '${s.again}',
+              label: 'أعد',
+              color: error,
+              icon: Icons.replay_rounded),
+          StatTile(
+              value: '${s.streakDays}',
+              label: 'أيام متتالية',
+              color: gold,
+              icon: Icons.local_fire_department_rounded),
+        ],
+      ),
+    ]);
   }
 }
 
@@ -382,9 +402,9 @@ class _CreatePlanSheetState extends State<_CreatePlanSheet> {
     final surahs = Repo.i.surahs();
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 16,
+        left: spacePage,
+        right: spacePage,
+        top: 12,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: SingleChildScrollView(
@@ -392,6 +412,17 @@ class _CreatePlanSheetState extends State<_CreatePlanSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: muted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             const Text('خطة حفظ جديدة',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
             const SizedBox(height: 12),
@@ -442,10 +473,10 @@ class _CreatePlanSheetState extends State<_CreatePlanSheet> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 10),
-              Text(_error!, style: const TextStyle(color: Colors.red)),
+              ErrorCard(message: _error!),
             ],
             const SizedBox(height: 16),
-            FilledButton(
+            PrimaryButton(
               onPressed: _saving
                   ? null
                   : () async {
@@ -468,7 +499,7 @@ class _CreatePlanSheetState extends State<_CreatePlanSheet> {
                         Navigator.pop(context);
                       }
                     },
-              child: const Text('حفظ الخطة'),
+              label: 'حفظ الخطة',
             ),
           ],
         ),

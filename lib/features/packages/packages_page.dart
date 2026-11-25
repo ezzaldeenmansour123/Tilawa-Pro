@@ -23,6 +23,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
 import 'download_manager.dart';
 import 'package_catalog.dart';
 import 'package_models.dart';
@@ -259,13 +261,27 @@ class _PackagesPageState extends State<PackagesPage> {
     }
   }
 
+  /// Presentation-only tone for the Fatiha status chip; the status text
+  /// itself comes unchanged from [_statusText].
+  StatusTone _fatihaTone(PackageRecord? r) {
+    if (r == null) return StatusTone.neutral;
+    return switch (r.status) {
+      PackageStatus.installed => StatusTone.ok,
+      PackageStatus.downloading || PackageStatus.verifying =>
+        StatusTone.info,
+      PackageStatus.paused => StatusTone.warn,
+      PackageStatus.incomplete || PackageStatus.failed => StatusTone.error,
+      PackageStatus.notInstalled => StatusTone.neutral,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('الحزم والتنزيلات')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
+          : ListView(padding: const EdgeInsets.fromLTRB(spacePage, 8, spacePage, 24), children: [
               _introCard(),
               if (_error != null) ...[
                 const SizedBox(height: 10),
@@ -276,48 +292,58 @@ class _PackagesPageState extends State<PackagesPage> {
                 _messageCard(_notice!, isError: false),
               ],
               const SizedBox(height: 16),
-              const Text('جاهزة للتنزيل الآن',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const SectionHeader(title: 'جاهزة للتنزيل الآن'),
               const SizedBox(height: 8),
               _fatihaCard(),
               const SizedBox(height: 18),
-              const Text('قيد الإعداد',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const SectionHeader(title: 'قيد الإعداد'),
               const SizedBox(height: 4),
               const Text(
                   'الحزم غير نموذجي التسميع بلا manifest منشور بعد، فلا زر تنزيل لها حتى يُنشر manifest موثّق بالحجوم والبصمات. نموذجا التسميع يُداران من صفحة «النموذج والتنزيل» — حالتهما الحية أدناه.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
+                  style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
               const SizedBox(height: 8),
               for (final p in packageCatalog) _pendingCard(p),
               const SizedBox(height: 16),
               Text('المساحة المستخدمة للحزم: ${formatBytes(_usedBytes)}',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  style: const TextStyle(fontSize: 12, color: muted)),
             ]),
     );
   }
 
   Widget _introCard() {
-    return const Card(
-      child: Padding(
-        padding: EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('الحزم اختيارية',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          SizedBox(height: 6),
-          Text(
-              'التطبيق الأساسي يعمل كاملاً دون إنترنت. الحزم الإضافية تُنزَّل عند طلبك فقط، ويُعرض حجمها قبل التنزيل، ويمكن إيقافها واستئنافها وحذفها. لا تنزيل في الخلفية ولا اتصال دون إذنك.',
-              style: TextStyle(fontSize: 13, height: 1.9)),
-        ]),
-      ),
+    return const TilawaCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('الحزم اختيارية',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        SizedBox(height: 6),
+        Text(
+            'التطبيق الأساسي يعمل كاملاً دون إنترنت. الحزم الإضافية تُنزَّل عند طلبك فقط، ويُعرض حجمها قبل التنزيل، ويمكن إيقافها واستئنافها وحذفها. لا تنزيل في الخلفية ولا اتصال دون إذنك.',
+            style: TextStyle(fontSize: 13, height: 1.9)),
+      ]),
     );
   }
 
   Widget _messageCard(String text, {required bool isError}) {
-    return Card(
-      color: isError ? Colors.red.shade50 : Colors.green.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Text(text, style: const TextStyle(fontSize: 13, height: 1.8)),
+    if (isError) return ErrorCard(message: text);
+    // Success/notice: same token-only treatment as ErrorCard, with the
+    // success tone (successLight bg + success text) — no hardcoded colour.
+    return Container(
+      padding: const EdgeInsets.all(spaceCard),
+      decoration: BoxDecoration(
+        color: successLight,
+        borderRadius: BorderRadius.circular(radiusCardSmall),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.check_circle_outline_rounded, color: success),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    fontSize: 13, height: 1.8, color: success)),
+          ),
+        ],
       ),
     );
   }
@@ -325,10 +351,8 @@ class _PackagesPageState extends State<PackagesPage> {
   Widget _fatihaCard() {
     final manifest = _fatiha;
     if (manifest == null) {
-      return const Card(
-          child: Padding(
-              padding: EdgeInsets.all(14),
-              child: Text('تعذّر تحميل manifest حزمة الفاتحة من الأصول.')));
+      return const TilawaCard(
+          child: Text('تعذّر تحميل manifest حزمة الفاتحة من الأصول.'));
     }
     final r = _fatihaRecord;
     final status = _statusText(r);
@@ -337,65 +361,69 @@ class _PackagesPageState extends State<PackagesPage> {
         (r.status == PackageStatus.downloading ||
             r.status == PackageStatus.paused ||
             r.status == PackageStatus.verifying);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(manifest.titleAr,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(
-              '${formatBytes(manifest.totalBytes)} • ${manifest.files.length} ملفات • المصدر: EveryAyah (64kbps)',
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          const SizedBox(height: 4),
-          Text('الحالة: $status',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-          if (showProgress) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: progress),
+    return TilawaCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(manifest.titleAr,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        Text(
+            '${formatBytes(manifest.totalBytes)} • ${manifest.files.length} ملفات • المصدر: EveryAyah (64kbps)',
+            style: const TextStyle(fontSize: 12, color: muted)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Text('الحالة:',
+                style:
+                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            StatusChip(label: status, tone: _fatihaTone(r)),
           ],
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            if (r == null || r.status == PackageStatus.notInstalled)
-              FilledButton.icon(
-                onPressed: _download,
-                icon: const Icon(Icons.download_rounded),
-                label: Text('تنزيل (${formatBytes(manifest.totalBytes)})'),
-              ),
-            if (r?.status == PackageStatus.downloading)
-              FilledButton.icon(
-                onPressed: _pause,
-                icon: const Icon(Icons.pause_rounded),
-                label: const Text('إيقاف مؤقت'),
-              ),
-            if (r?.status == PackageStatus.paused ||
-                r?.status == PackageStatus.failed ||
-                r?.status == PackageStatus.incomplete)
-              FilledButton.icon(
-                onPressed: _resume,
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('استئناف'),
-              ),
-            if (r?.status == PackageStatus.installed)
-              FilledButton.icon(
-                onPressed: _verify,
-                icon: const Icon(Icons.verified_rounded),
-                label: const Text('تحقق من البصمات'),
-              ),
-            if (r != null && r.status != PackageStatus.notInstalled)
-              OutlinedButton.icon(
-                onPressed: _delete,
-                icon: const Icon(Icons.delete_rounded),
-                label: const Text('حذف'),
-              ),
-          ]),
-          if (r?.status == PackageStatus.installed) ...[
-            const SizedBox(height: 8),
-            const Text('ملفات الفاتحة السبع للعفاسي متوفرة دون إنترنت وتُستخدم عند تشغيل السورة.',
-                style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
-          ],
+        ),
+        if (showProgress) ...[
+          const SizedBox(height: 12),
+          TilawaProgressBar(value: progress, color: brandPrimary),
+        ],
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          if (r == null || r.status == PackageStatus.notInstalled)
+            PrimaryButton(
+              onPressed: _download,
+              icon: Icons.download_rounded,
+              label: 'تنزيل (${formatBytes(manifest.totalBytes)})',
+            ),
+          if (r?.status == PackageStatus.downloading)
+            PrimaryButton(
+              onPressed: _pause,
+              icon: Icons.pause_rounded,
+              label: 'إيقاف مؤقت',
+            ),
+          if (r?.status == PackageStatus.paused ||
+              r?.status == PackageStatus.failed ||
+              r?.status == PackageStatus.incomplete)
+            PrimaryButton(
+              onPressed: _resume,
+              icon: Icons.play_arrow_rounded,
+              label: 'استئناف',
+            ),
+          if (r?.status == PackageStatus.installed)
+            PrimaryButton(
+              onPressed: _verify,
+              icon: Icons.verified_rounded,
+              label: 'تحقق من البصمات',
+            ),
+          if (r != null && r.status != PackageStatus.notInstalled)
+            SecondaryButton(
+              onPressed: _delete,
+              icon: Icons.delete_rounded,
+              label: 'حذف',
+            ),
         ]),
-      ),
+        if (r?.status == PackageStatus.installed) ...[
+          const SizedBox(height: 8),
+          const Text('ملفات الفاتحة السبع للعفاسي متوفرة دون إنترنت وتُستخدم عند تشغيل السورة.',
+              style: TextStyle(fontSize: 12, color: muted, height: 1.7)),
+        ],
+      ]),
     );
   }
 
@@ -412,6 +440,20 @@ class _PackagesPageState extends State<PackagesPage> {
     };
   }
 
+  /// Presentation-only tone for an AI-model status chip; the status text
+  /// itself comes unchanged from [_aiModelStatusText].
+  StatusTone _aiTone(String tier) {
+    if (!_aiStatusLoaded) return StatusTone.info;
+    final info = _aiStatus[tier];
+    if (info == null) return StatusTone.error;
+    return switch (info.status) {
+      ModelStatus.ready => StatusTone.ok,
+      ModelStatus.notInstalled => StatusTone.neutral,
+      ModelStatus.downloading => StatusTone.info,
+      ModelStatus.failed => StatusTone.error,
+    };
+  }
+
   Widget _pendingCard(CatalogPackage p) {
     final isAi = p.kind == PackageKind.aiModel;
     if (isAi) {
@@ -419,57 +461,60 @@ class _PackagesPageState extends State<PackagesPage> {
       // The old «معلّقة — محرك التسميع غير مدمج…» badge is gone: the
       // engine has been wired into the app since v1.1.0+1.
       final tier = p.id == 'ai-model-lite' ? 'lite' : 'full';
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(p.titleAr,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text('الحجم: ${p.displaySize}',
-                    style:
-                        const TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 4),
-                Text(p.licenseNote,
-                    style: const TextStyle(
-                        fontSize: 12, color: Colors.grey, height: 1.7)),
-                const SizedBox(height: 6),
-                Text('الحالة: ${_aiModelStatusText(tier)}',
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: _modelManager == null
-                      ? null
-                      : () => _openModelPage(tier),
-                  icon: const Icon(Icons.memory),
-                  label: const Text('فتح صفحة النموذج والتنزيل'),
-                ),
-              ]),
-        ),
+      return TilawaCard(
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(p.titleAr,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text('الحجم: ${p.displaySize}',
+                  style:
+                      const TextStyle(fontSize: 12, color: muted)),
+              const SizedBox(height: 4),
+              Text(p.licenseNote,
+                  style: const TextStyle(
+                      fontSize: 12, color: muted, height: 1.7)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Text('الحالة:',
+                      style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w700)),
+                  const SizedBox(width: 8),
+                  StatusChip(
+                      label: _aiModelStatusText(tier),
+                      tone: _aiTone(tier)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              PrimaryButton(
+                onPressed: _modelManager == null
+                    ? null
+                    : () => _openModelPage(tier),
+                icon: Icons.memory,
+                label: 'فتح صفحة النموذج والتنزيل',
+              ),
+            ]),
       );
     }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(p.titleAr,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text('الحجم: ${p.displaySize}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          const SizedBox(height: 4),
-          Text(p.licenseNote,
-              style: const TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
-          const SizedBox(height: 6),
-          const Chip(
-            label: Text('قيد الإعداد — لا يوجد manifest منشور بعد'),
-          ),
-        ]),
-      ),
+    return TilawaCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(p.titleAr,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text('الحجم: ${p.displaySize}',
+            style: const TextStyle(fontSize: 12, color: muted)),
+        const SizedBox(height: 4),
+        Text(p.licenseNote,
+            style: const TextStyle(fontSize: 12, color: muted, height: 1.7)),
+        const SizedBox(height: 8),
+        const StatusChip(
+          label: 'قيد الإعداد — لا يوجد manifest منشور بعد',
+          tone: StatusTone.neutral,
+        ),
+      ]),
     );
   }
 }
