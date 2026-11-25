@@ -60,3 +60,9 @@ ios/
 assets/quran.db
 assets/quran.db.sha256
 assets/fonts/
+
+# Web bundle dependencies (installed by `npm ci` from web/package-lock.json)
+web/node_modules/
+
+# Web bundle (generated locally / built in CI from web/src/bridge.js; never commit)
+assets/web/bundle.js
