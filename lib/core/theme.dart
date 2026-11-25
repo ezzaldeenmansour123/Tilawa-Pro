@@ -24,6 +24,49 @@ const goldLight = Color(0xFFFFF3CD);
 const cream = Color(0xFFF6FAFC); // خلفية فاتحة بلون سماوي شاحب
 const ink = Color(0xFF1F2E2A);
 
+// ───────── رموز التصميم الجديدة — تقرير إعادة التصميم §d.1 (2026-11-26) ─────────
+// القيم الجديدة مأخوذة من عيّنات التصميم المرجعي (تقريبية ± بضع وحدات لكل قناة،
+// كما وثّق التقرير)؛ الثوابت الـ14 القديمة أعلاه محفوظة بقيمها حرفياً.
+// ملاحظة الوضع الليلي: قيم dark لهذه الرموز تُطبَّق داخل buildTheme أدناه —
+//   dark bgCream = خلفية السقالة 0xFF101D24، وdark card = ‏0xFF1C2B33 (كما في التقرير).
+const bgCream = Color(0xFFFBF7F1); // سكري دافئ — خلفية الصفحات في الوضع الفاتح
+const surfaceCard = Color(0xFFFFFFFF); // سطح البطاقات (أبيض، كما في surface الحالية)
+const brandPrimary = Color(0xFF276D87); // أزرق بترولي — الأزرار الأساسية وزر الميكروفون
+const brandPrimaryDark = Color(0xFF1B5566); // مشتق: الطرف الداكن لتدرّج زر التصميم المرجعي
+const pinkSoft = Color(0xFFFFE9E4); // وردي باهت جداً — بطاقة تفاصيل الخطأ
+const success = Color(0xFF4C9D62); // أخضر هادئ — النجاح والتقدم
+const successLight = mintLight; // اسم بديل لـ mintLight (0xFFE2F4EB) لاستخدامات النجاح
+const error = Color(0xFFC62828); // أحمر نصوص/أيقونات الخطأ (بدل Colors.red المتناثرة)
+const errorBg = Color(0xFFFDECEA); // خلفية بطاقات الخطأ (بدل Colors.red.shade50)
+const warning = Color(0xFFB7791F); // كهرماني — «يحتاج مراجعة» (بدل Colors.amber)
+const muted = Color(0xFF6B7A76); // نص ثانوي على الخلفية السكرية (بدل Colors.grey)
+// ألوان تمييز الكلمات في جلسة التسميع — دلالية وليست زخرفية (تقرير §d.1):
+// التعيين حالة-الكلمة → لون ثابت؛ هنا فقط درجات أفتح من الألوان نفسها
+// (green.shade100 / red.shade100 / yellow.shade100 بدل shade200 الحالية).
+const wordMatchedBg = Color(0xFFC8E6C9); // كلمة مؤكدة من المحرك (ثقة ≥ 0.6)
+const wordErrorBg = Color(0xFFFFCDD2); // خطأ مؤكد من المدقق
+const wordReviewBg = Color(0xFFFFF9C4); // غير مؤكد — يحتاج مراجعة
+
+// ───────── نصف الأقطار والمسافات — تقرير إعادة التصميم §d.2 ─────────
+const radiusCard = 24.0; // نصف قطر البطاقة (softCard الحالية)
+const radiusCardSmall = 16.0;
+const radiusChip = 20.0;
+const radiusButton = 14.0;
+const spacePage = 16.0; // حشوة الصفحة العامة
+const spaceCard = 16.0; // حشوة البطاقة
+const spaceSection = 12.0; // الفاصل بين الأقسام
+
+/// لون يُطبَّق فقط عند التفعيل؛ عند التعطيل يُرجع null فيترك الإطار
+/// لونه الافتراضي — حتى لا يبدو الزر المعطَّل مفعَّلاً أبداً.
+WidgetStateProperty<Color?> _enabledOnly(Color color) =>
+    WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled) ? null : color);
+
+/// حد جانبي يُطبَّق فقط عند التفعيل (نفس قاعدة التعطيل أعلاه).
+WidgetStateProperty<BorderSide?> _enabledBorder(Color color) =>
+    WidgetStateProperty.resolveWith((states) =>
+        states.contains(WidgetState.disabled) ? null : BorderSide(color: color));
+
 ThemeData buildTheme(bool dark) {
   final scheme = dark
       ? const ColorScheme.dark(
@@ -36,7 +79,103 @@ ThemeData buildTheme(bool dark) {
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: dark ? const Color(0xFF101D24) : cream,
+    // تقرير إعادة التصميم §d.1/§d.2 (تغيير مقصود): خلفية الوضع الفاتح
+    // من cream الباردة 0xFFF6FAFC إلى bgCream السكرية الدافئة 0xFFFBF7F1.
+    // الوضع الليلي بلا تغيير: 0xFF101D24.
+    scaffoldBackgroundColor: dark ? const Color(0xFF101D24) : bgCream,
+    // تقرير إعادة التصميم §d.2: سمات مركزية جديدة في كلا الوضعين.
+    cardTheme: CardTheme(
+      color: dark ? const Color(0xFF1C2B33) : surfaceCard,
+      elevation: 0,
+      shadowColor: Colors.black.withValues(alpha: dark ? 0.25 : 0.06),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusCard)),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: ButtonStyle(
+        backgroundColor: _enabledOnly(brandPrimary),
+        foregroundColor: _enabledOnly(Colors.white),
+        minimumSize: WidgetStateProperty.all(const Size.fromHeight(52)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusButton))),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: _enabledOnly(brandPrimary),
+        side: _enabledBorder(brandPrimary),
+        minimumSize: WidgetStateProperty.all(const Size.fromHeight(52)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusButton))),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: ButtonStyle(foregroundColor: _enabledOnly(brandPrimary)),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? brandPrimary : null),
+        foregroundColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? Colors.white : null),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusButton))),
+      ),
+    ),
+    switchTheme: SwitchThemeData(
+      trackColor: WidgetStateProperty.resolveWith((states) =>
+          states.contains(WidgetState.selected) ? brandPrimary : null),
+      thumbColor: WidgetStateProperty.resolveWith((states) =>
+          states.contains(WidgetState.selected) ? Colors.white : null),
+    ),
+    checkboxTheme: CheckboxThemeData(
+      fillColor: WidgetStateProperty.resolveWith((states) =>
+          states.contains(WidgetState.selected) ? brandPrimary : null),
+      checkColor: WidgetStateProperty.all(Colors.white),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: brandPrimary,
+      linearTrackColor: dark ? const Color(0xFF24455A) : tealLight,
+      circularTrackColor: dark ? const Color(0xFF24455A) : tealLight,
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: dark ? const Color(0xFF1C2B33) : surfaceCard,
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(radiusButton)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusButton),
+        borderSide:
+            BorderSide(color: dark ? const Color(0xFF24455A) : tealLight),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusButton),
+        borderSide: const BorderSide(color: brandPrimary, width: 1.5),
+      ),
+    ),
+    dividerTheme: DividerThemeData(
+      color: dark ? const Color(0xFF24455A) : tealLight,
+      thickness: 1,
+      space: 16,
+    ),
+    textTheme: TextTheme(
+      titleLarge: TextStyle(
+          fontSize: 20, fontWeight: FontWeight.w800, color: scheme.onSurface),
+      titleMedium: TextStyle(
+          fontSize: 18, fontWeight: FontWeight.w800, color: scheme.onSurface),
+      bodyMedium:
+          TextStyle(fontSize: 14, height: 1.8, color: scheme.onSurface),
+      bodySmall:
+          TextStyle(fontSize: 13, height: 1.7, color: scheme.onSurface),
+      labelSmall: TextStyle(
+          fontSize: 12,
+          color: dark
+              ? scheme.onSurface.withValues(alpha: 0.7)
+              : muted),
+    ),
     appBarTheme: AppBarTheme(
       backgroundColor: Colors.transparent,
       elevation: 0,
