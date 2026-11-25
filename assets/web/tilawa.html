@@ -17,7 +17,34 @@
     <p class="muted">مساعد حفظ — يكشف أخطاء الحفظ فقط، لا يقيّم التجويد أو النطق؛ حفص فقط؛ قد يخطئ؛ الصوت لا يغادر جهازك.</p>
     <p class="muted" id="detail">يُقدَّم هذا الصفحة من خادم محلي (http://127.0.0.1) داخل التطبيق — السياق الآمن المطلوب للميكروفون.</p>
   </div>
-  <script src="/bundle.js"></script>
+  <script>
+    // Permanent diagnostics (Phase 2, 2.3): a bundle that fails to load
+    // or throws while evaluating used to fail SILENTLY — the page still
+    // fired onPageFinished and Dart assumed the bridge existed (poc-14).
+    // Every failure path below reports to Dart through TilawaBridge so
+    // the failing layer (build / server / evaluation) is named, not timed out.
+    function __tilawaReport(type, message, reason) {
+      try {
+        if (window.TilawaBridge) {
+          window.TilawaBridge.postMessage(JSON.stringify({ type: type, message: message, reason: reason || undefined }));
+        }
+      } catch (_) { /* reporting must never throw */ }
+      try { console.error('[TilawaPro] ' + type + ': ' + message); } catch (_) {}
+    }
+    window.__tilawaBundleError = function () {
+      // Fires when /bundle.js itself fails to load (404/500/network).
+      // The inline script below runs anyway, so this is reported once
+      // here and the inline check below skips its duplicate.
+      window.__tilawaBundleFailed = true;
+      __tilawaReport('bundle-error', 'فشل تحميل حزمة المحرك (bundle.js) من الخادم المحلي — تحقق من وجودها في التطبيق (CI) وأعد تشغيل التطبيق.', 'bundle-load-failed');
+    };
+    // An exception thrown while bundle.js EVALUATES (before it defines
+    // window.TilawaPro) also reaches here — the poc-14 hypothesis #1.
+    window.addEventListener('error', function (e) {
+      __tilawaReport('page-error', 'خطأ في صفحة المحرك: ' + (e.message || 'unknown error') + (e.filename ? ' (' + e.filename + ':' + (e.lineno || '?') + ')' : ''), 'page-error');
+    });
+  </script>
+  <script src="/bundle.js" onerror="window.__tilawaBundleError()"></script>
   <script>
     // The Dart side calls window.TilawaPro.init(...) after load.
     // This page intentionally shows almost nothing: the Flutter UI is the
@@ -25,6 +52,12 @@
     document.getElementById('status').textContent = 'المحرك جاهز للتهيئة من التطبيق.';
     if (window.TilawaBridge) {
       window.TilawaBridge.postMessage(JSON.stringify({ type: 'page-loaded' }));
+    }
+    // If the bundle failed to load or threw during evaluation, the bridge
+    // object never exists — say so explicitly instead of letting Dart
+    // discover it only at init() time (or via a timeout).
+    if (!window.__tilawaBundleFailed && typeof window.TilawaPro === 'undefined') {
+      __tilawaReport('bundle-error', 'حزمة المحرك (bundle.js) حُمّلت لكن الجسر window.TilawaPro غير معرَّف — الحزمة رمت خطأً أثناء التقييم قبل تعريف الجسر. أعد بناء الحزمة.', 'bridge-missing');
     }
   </script>
 </body>
