@@ -63,16 +63,20 @@ class LocalServer {
   ///
   /// Why this matters — fixed 2026-11-25 after the poc-9 phone test:
   /// onnxruntime-web >= 1.19 ships ONLY multi-threaded WASM builds
-  /// (ort-wasm-simd-threaded.wasm); the single-threaded files
-  /// (ort-wasm-simd.wasm, ort-wasm.wasm) do NOT exist in the package,
-  /// so the loader 404s on them whenever numThreads == 1. And
-  /// @tilawa/core/web sets numThreads = 1 whenever the page is NOT
-  /// cross-origin isolated. Android WebView DOES support SharedArrayBuffer
-  /// — it is gated on cross-origin isolation (Chromium >= 92), exactly
-  /// like desktop Chrome — so serving COOP: same-origin + COEP:
-  /// require-corp makes `crossOriginIsolated === true`, lets the loader
-  /// use the threaded build, and unblocks the engine. The earlier claim
-  /// in this file ("isolation is impossible in WebView") was wrong.
+  /// (ort-wasm-simd-threaded.jsep.*); the single-threaded files
+  /// (ort-wasm-simd.wasm, ort-wasm.wasm) do NOT exist in the package.
+  /// SharedArrayBuffer — which the threaded build uses when
+  /// numThreads > 1 — is gated on cross-origin isolation (Chromium
+  /// >= 92), exactly like desktop Chrome, so serving COOP: same-origin
+  /// + COEP: require-corp makes `crossOriginIsolated === true`
+  /// possible and lets the loader use threads > 1. CORRECTION
+  /// (2026-11-26): isolation is what enables threads > 1, NOT what
+  /// makes the engine load at all — when the page is NOT isolated,
+  /// @tilawa/core forces numThreads = 1 and the SAME JSEP files run
+  /// single-threaded (wasm-factory.ts:131-149 falls back with a warning
+  /// instead of failing). Whether this WebView actually reports
+  /// crossOriginIsolated == true is still UNMEASURED on-device; the
+  /// bridge's early env probe now measures it before every load.
   /// CORP: same-origin on every response is what lets COEP require-corp
   /// admit our own same-origin subresources (bundle, model, wasm).
   static void _isolationHeaders(HttpResponse res) {
@@ -132,7 +136,14 @@ class LocalServer {
         await _serveFile(req, _resolveModelFile(path));
       } else if (path.startsWith('/ort/')) {
         // onnxruntime-web WASM files, downloaded by tools/download_assets.py
-        // into <modelDir>/ort/<version>/.
+        // into <modelDir>/ort/<version>/. VERIFIED 2026-11-26: this branch
+        // is generic (any path under /ort/ maps to the same path under
+        // the model dir), so it serves the JSEP pair
+        // (ort-wasm-simd-threaded.jsep.mjs/.wasm) the 1.30.0 loader
+        // requests — NO server change was needed for the JSEP fix; the
+        // pro-build-28 404 was a missing FILE, not a missing route.
+        // MIME: .mjs -> text/javascript, .wasm -> application/wasm
+        // (see _mime above); COOP/COEP/CORP on every response.
         await _serveFile(req, File('${_modelDir.path}$path'));
       } else {
         _isolationHeaders(req.response);

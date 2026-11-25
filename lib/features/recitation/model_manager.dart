@@ -14,11 +14,20 @@
 //         the reference had NO pinned hash and was only checked by ayah
 //         count, and only when first downloaded.
 //   wasm: onnxruntime-web 1.30.0 from the jsDelivr CDN mirror, downloaded
-//         2026-11-25 from the same URLs the app downloads from:
-//         ort-wasm-simd-threaded.mjs, 24,381 bytes,
-//           sha256 e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b
-//         ort-wasm-simd-threaded.wasm, 14,239,897 bytes,
-//           sha256 3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2
+//         2026-11-26 from the same URLs the app downloads from:
+//         ort-wasm-simd-threaded.jsep.mjs, 46,851 bytes,
+//           sha256 709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947
+//         ort-wasm-simd-threaded.jsep.wasm, 28,312,028 bytes,
+//           sha256 3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f
+//         Pins verified 2026-11-26 against the jsDelivr source itself
+//         (downloaded from cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/
+//         and SHA-256-compared with the vendored node_modules copy —
+//         byte-identical). The pre-2026-11-26 pins (non-JSEP
+//         ort-wasm-simd-threaded.mjs/.wasm) are RETIRED: the 1.30.0 "all"
+//         build NEVER requests them (0 occurrences in assets/web/bundle.js;
+//         wasm-utils-import.ts:284 hardcodes the .jsep.mjs filename), so
+//         checking/downloading them passed every gate while the loader
+//         404'd on the JSEP pair on pro-build-28.
 //
 // Downloads happen ONCE, on explicit user request, from https://tilawa.dev/v1/
 // (model + reference) and from the jsDelivr CDN mirror of onnxruntime-web
@@ -96,30 +105,47 @@ const kReferenceSha256 =
 /// mirror of the onnxruntime-web npm package — never from tilawa.dev at
 /// runtime (the app must not depend on tilawa.dev after first install).
 ///
-/// VERIFIED 2026-11-25 against the live jsDelivr listing: onnxruntime-web
-/// 1.30.0 (and every version back to 1.19.0) ships ONLY simd-threaded
-/// builds — there is NO ort-wasm-simd.wasm / ort-wasm.wasm any more, so the
-/// old 4-file list 404'd on the phone (poc-9). The threaded build needs
-/// SharedArrayBuffer, which needs cross-origin isolation — LocalServer
-/// therefore sends COOP: same-origin + COEP: require-corp on every
-/// response (see lib/local_server.dart). If the WebView still reports
-/// crossOriginIsolated == false, the engine cannot load and the PoC must
-/// record that as a NO-GO data point (do NOT silently fall back).
-/// The .mjs is the Emscripten loader glue the runtime fetches from
-/// wasmPaths alongside the .wasm; both files are required.
+/// WHICH FILES (corrected 2026-11-26, pro-build-28 forensics): the 1.30.0
+/// "all" build loads ONLY the JSEP pair —
+/// ort-wasm-simd-threaded.jsep.mjs + ort-wasm-simd-threaded.jsep.wasm —
+/// resolved against wasmPaths (wasm-utils-import.ts:284 hardcodes the
+/// .jsep.mjs filename; the .jsep.wasm is fetched by the JSEP glue's
+/// locateFile). The non-JSEP pair (ort-wasm-simd-threaded.mjs/.wasm) is
+/// NEVER requested by this build, so it was REPLACED, not kept alongside:
+/// keeping it would add ~14.3 MB of files the loader never reads. The
+/// JSEP pair costs 28,358,879 bytes total (~28.4 MB).
+///
+/// THREADS (corrected 2026-11-26): onnxruntime-web 1.30.0 ships ONLY
+/// threaded builds — there is NO single-threaded file in dist/ — and
+/// @tilawa/core requires onnxruntime-web >= 1.19.0 (peerDependencies),
+/// so a downgrade to a single-threaded build is blocked. The
+/// "single-thread path" is NOT a different file: it is the SAME JSEP
+/// files running with numThreads = 1. That is exactly what happens when
+/// the page is not cross-origin isolated: @tilawa/core forces
+/// numThreads = 1 (dist/runtime/web.js:37), and onnxruntime-web itself
+/// falls back to 1 with a warning instead of failing
+/// (wasm-factory.ts:131-149). A missing SharedArrayBuffer therefore
+/// cannot produce a load failure — only the missing JSEP files could,
+/// and did (pro-build-28). Whether this WebView actually reports
+/// crossOriginIsolated == true is still UNMEASURED on-device; the
+/// bridge's early env probe (web/src/env_probe.js) now measures it
+/// before every load instead of assuming it.
 /// Same 2 files as tools/download_assets.py ORT_WASM_FILES — keep both
 /// lists in sync.
 const kOrtWebVersion = '1.30.0';
 const kOrtWasmFiles = [
-  'ort-wasm-simd-threaded.mjs',
-  'ort-wasm-simd-threaded.wasm',
+  'ort-wasm-simd-threaded.jsep.mjs',
+  'ort-wasm-simd-threaded.jsep.wasm',
 ];
 const kOrtBaseUrl =
     'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist';
 
 /// Pinned WASM identity (Phase 2, 2.5): exact bytes + SHA-256 of the files
-/// downloaded 2026-11-25 from the jsDelivr URLs above. Verified by size
+/// downloaded 2026-11-26 from the jsDelivr URLs above. Verified by size
 /// at download time and by ortWasmReady(), and by size + SHA in status().
+/// JSEP pins verified 2026-11-26 against the jsDelivr source itself
+/// (not the vendored copy alone): the downloaded files are byte-identical
+/// to web/node_modules/onnxruntime-web/dist/ (same sizes + SHA-256).
 class OrtWasmAsset {
   const OrtWasmAsset({
     required this.name,
@@ -133,16 +159,16 @@ class OrtWasmAsset {
 
 const kOrtWasmAssets = [
   OrtWasmAsset(
-    name: 'ort-wasm-simd-threaded.mjs',
-    bytes: 24381,
+    name: 'ort-wasm-simd-threaded.jsep.mjs',
+    bytes: 46851,
     sha256:
-        'e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b',
+        '709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947',
   ),
   OrtWasmAsset(
-    name: 'ort-wasm-simd-threaded.wasm',
-    bytes: 14239897,
+    name: 'ort-wasm-simd-threaded.jsep.wasm',
+    bytes: 28312028,
     sha256:
-        '3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2',
+        '3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f',
   ),
 ];
 
