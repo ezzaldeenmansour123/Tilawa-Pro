@@ -27,7 +27,10 @@ dependencies:
   just_audio: ^0.10.6
   http: ^1.6.0
   # اختيار ملف للاستيراد (ملف تصدير JSON) — واجهة الإعدادات فقط.
-  file_picker: ^8.1.2
+  # 10.3.3+: يستخدم flutter.compileSdkVersion (36 في Flutter 3.50.1) بدل
+  # compileSdk 34 المثبّت في 8.x — وإلا يفشل checkReleaseAarMetadata في CI
+  # لأن flutter_plugin_android_lifecycle 2.0.35 يتطلب compileSdk 36+.
+  file_picker: ^10.3.3
   # التسميع الذكي (من Tilawa PoC): WebView يستضيف محرك yazinsai/tilawa،
   # وpermission_handler لإذن الميكروفون (بما فيه الرفض الدائم → الإعدادات).
   webview_flutter: ^4.0.0
