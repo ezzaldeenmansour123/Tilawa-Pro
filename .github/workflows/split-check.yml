@@ -1,0 +1,119 @@
+# فحص الشجرة المدمجة — تلاوة برو (Phase 1: كان فحص تقسيم main.dart).
+#
+# التقسيم دُمج في 2026-11-25 (models.dart + theme.dart + مصحف نصي + حزم
+# + تصدير/استيراد + خطط حفظ)، وتحليله أخضر محلياً (flutter analyze صفر
+# مشكلات مع الأصول مولَّدة). هذا السير يحرس الشجرة المدمجة على فروع
+# feature فقط — لا main، لا إصدار، لا APK.
+#
+# التشغيل اليدوي: Actions → split-check → Run workflow → branch: feature/...
+# التشغيل التلقائي: أي push إلى فرع feature/*.
+#
+# ملاحظة ترتيب: توليد الأصول (quran.db + الخطوط) قبل analyze/test، لأن
+# analyze يفشل إن لم توجد الأصول المعلنة في pubspec.yaml، وtest يفشل في
+# بناء حزمة الأصول للسبب نفسه.
+#
+# ما يجب أن يكون أخضر:
+#   1. flutter analyze — صفر errors/warnings/infos مع الأصول مولَّدة.
+#   2. flutter test — كل اختبارات test/ خضراء.
+#   3. applicationId guard — صفر ظهور لـ com.tilawa.app في lib/ و tools/
+#      و pubspec.yaml (المعرّف الصحيح لا يظهر في الكود أصلاً؛ لا يوجد
+#      android/ في المستودع — يُولَّد في CI).
+#   4. Split transfer guard — الرموز المنقولة لا تعود إلى الملفات القديمة.
+
+name: split-check
+
+on:
+  push:
+    branches:
+      - 'feature/*'
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (feature branch only)
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter 3.50.1
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.1'
+          channel: stable
+          cache: true
+
+      - name: flutter --version
+        run: flutter --version
+
+      - name: Download Quran datasets (pinned revisions)
+        run: |
+          pip install -q huggingface_hub pyarrow pandas pillow
+          python3 - <<'PY'
+          from huggingface_hub import snapshot_download
+          d1 = snapshot_download(
+              repo_id="quranlab/quran",
+              repo_type="dataset",
+              revision="b4e0edc2a0c8ffa6952c6f5fdf31a19acd75a068",
+              allow_patterns=["arabic-uthmani/*.parquet", "arabic-simple-clean/*.parquet"])
+          d2 = snapshot_download(
+              repo_id="quranlab/quran-tafsir",
+              repo_type="dataset",
+              revision="1020ac515b158a1e718fe647dab73c0c77dd5a65",
+              allow_patterns=["tafsir-muyassar-ar/*.parquet",
+                              "tafsir-jalalayn-ar/*.parquet",
+                              "tafsir-saadi-ar/*.parquet"])
+          import shutil, os
+          for root, dirs, files in os.walk(d2):
+              for f in files:
+                  src = os.path.join(root, f)
+                  rel = os.path.relpath(src, d2)
+                  dst = os.path.join(d1, rel)
+                  os.makedirs(os.path.dirname(dst), exist_ok=True)
+                  shutil.copyfile(src, dst)
+          with open("data_dir.txt", "w") as fh:
+              fh.write(d1)
+          PY
+
+      - name: Build Quran database
+        run: |
+          python3 tools/build_db.py "$(cat data_dir.txt)" assets/quran.db \
+            b4e0edc2a0c8ffa6952c6f5fdf31a19acd75a068 \
+            1020ac515b158a1e718fe647dab73c0c77dd5a65
+          ls -lh assets/quran.db assets/quran.db.sha256
+
+      - name: Download Amiri fonts
+        run: |
+          mkdir -p assets/fonts
+          curl -sL -o assets/fonts/Amiri-Regular.ttf \
+            https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf
+          curl -sL -o assets/fonts/Amiri-Bold.ttf \
+            https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Bold.ttf
+          ls -lh assets/fonts/
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: flutter analyze (must be green)
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+      - name: applicationId guard (code areas must not mention com.tilawa.app at all)
+        run: |
+          if grep -rn 'com\.tilawa\.app' lib/ tools/ pubspec.yaml; then
+            echo 'ERROR: com.tilawa.app found in code areas; the correct id must not appear in Dart code (no android/ yet).'
+            exit 1
+          fi
+          echo 'applicationId guard OK: no com.tilawa.app in lib/ tools/ pubspec.yaml'
+
+      - name: Split transfer guard (moved symbols must not remain in the old files)
+        run: |
+          # After the split, definitions live only in the new files.
+          for sym in 'class Surah' 'class Ayah' 'class Ijaz' 'class Reciter' 'const reciters' 'const offlineTafsirs' 'const onlineTafsirs'; do
+            if grep -q "$sym" lib/db.dart; then echo "ERROR: '$sym' still defined in lib/db.dart"; exit 1; fi
+          done
+          for sym in 'ThemeData buildTheme' 'class LogoMark' 'class FloralCorner' 'class OrnateFrame' 'class MonogramAvatar' 'class RobotAvatar'; do
+            if grep -q "$sym" lib/main.dart; then echo "ERROR: '$sym' still defined in lib/main.dart"; exit 1; fi
+          done
+          echo 'split transfer guard OK'

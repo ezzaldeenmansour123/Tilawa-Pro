@@ -1,8 +1,11 @@
 name: Build Tilawa APK
 
+# مُعطَّل عن التشغيل التلقائي — هذا سير عمل تلاوة v1.0.0 الأصلية.
+# في مستودع تلاوة برو يُبنى التطبيق عبر build-pro.yml فقط (وسم pro-build-N
+# وملف Tilawa-Pro.apk). هذا الملف محفوظ للرجوع إليه ولا يُشغَّل إلا يدوياً.
+# لا تعده إلى push قبل مراجعة فروقه عن build-pro.yml (أهمها: `rm -rf test`).
+
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
