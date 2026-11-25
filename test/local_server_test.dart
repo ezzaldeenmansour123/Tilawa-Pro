@@ -35,6 +35,7 @@ Future<(int, String, HttpHeaders)> _get(LocalServer s, String path) async {
 void main() {
   late Directory dir;
   late LocalServer server;
+  final logs = <String>[];
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('pro-local-server-test-');
@@ -46,9 +47,12 @@ void main() {
     await File('${dir.path}/model-lite.onnx').writeAsString('fake-model');
     await File('${dir.path}/ref-v2.json').writeAsString('{"ayahs":[]}');
     server = await LocalServer.start(dir);
+    logs.clear();
+    LocalServer.onLog = logs.add;
   });
 
   tearDown(() async {
+    LocalServer.onLog = null;
     await server.stop();
     if (await dir.exists()) await dir.delete(recursive: true);
   });
@@ -85,5 +89,20 @@ void main() {
     expect(status, 404);
     final (otherStatus, _, _) = await _get(server, '/no-such-route');
     expect(otherStatus, 404);
+  });
+
+  test('logs every request with its final status (Phase 2, 2.3a)', () async {
+    await _get(server, '/ort/1.30.0/ort-wasm-simd-threaded.wasm');
+    await _get(server, '/ort/1.30.0/does-not-exist.wasm');
+    await _get(server, '/no-such-route');
+    expect(
+      logs,
+      contains('GET /ort/1.30.0/ort-wasm-simd-threaded.wasm -> 200'),
+    );
+    expect(
+      logs,
+      contains('GET /ort/1.30.0/does-not-exist.wasm -> 404'),
+    );
+    expect(logs, contains('GET /no-such-route -> 404'));
   });
 }
