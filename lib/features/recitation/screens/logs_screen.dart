@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
 import '../event_log.dart';
 
 class LogsScreen extends StatefulWidget {
@@ -61,27 +63,36 @@ class _LogsScreenState extends State<LogsScreen> {
       child: RefreshIndicator(
         onRefresh: _refresh,
         child: _files.isEmpty
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('لا سجلات بعد — نفّذ جلسة تسميع أولاً.'),
-                ),
+            ? const EmptyState(
+                icon: Icons.history,
+                text: 'لا سجلات بعد — نفّذ جلسة تسميع أولاً.',
               )
             : ListView.builder(
+                padding: const EdgeInsets.all(spacePage),
                 itemCount: _files.length,
                 itemBuilder: (context, i) {
                   final f = _files[i];
                   final name = f.path.split('/').last;
-                  return FutureBuilder<String>(
-                    future: _summary(f),
-                    builder: (context, snap) => ListTile(
-                      title: Text(name),
-                      subtitle: Text(snap.data ?? '…'),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.share),
-                        tooltip: 'تصدير (ملف محلي فقط)',
-                        onPressed: () =>
-                            Share.shareXFiles([XFile(f.path)]),
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: spaceSection),
+                    child: TilawaCard(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: FutureBuilder<String>(
+                        future: _summary(f),
+                        builder: (context, snap) => ListTile(
+                          title: Text(name),
+                          subtitle: Text(
+                            snap.data ?? '…',
+                            style: const TextStyle(color: muted),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.share),
+                            tooltip: 'تصدير (ملف محلي فقط)',
+                            onPressed: () =>
+                                Share.shareXFiles([XFile(f.path)]),
+                          ),
+                        ),
                       ),
                     ),
                   );

@@ -17,6 +17,9 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
+
 import '../progress_store.dart';
 import '../session_logic.dart';
 import '../speech_engine.dart';
@@ -268,7 +271,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(spacePage),
         children: [
           _buildChecklist(),
           const SizedBox(height: 12),
@@ -299,7 +302,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: SecondaryButton(
+                  label: 'النموذج والتنزيل',
+                  icon: Icons.memory,
                   onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -309,21 +314,19 @@ class _RecitationScreenState extends State<RecitationScreen> {
                       ),
                     ),
                   ),
-                  icon: const Icon(Icons.memory),
-                  label: const Text('النموذج والتنزيل'),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: OutlinedButton.icon(
+                child: SecondaryButton(
+                  label: 'سجلات الجلسات',
+                  icon: Icons.list_alt,
                   onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => const LogsScreen(),
                     ),
                   ),
-                  icon: const Icon(Icons.list_alt),
-                  label: const Text('سجلات الجلسات'),
                 ),
               ),
             ],
@@ -333,7 +336,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
             'يعمل التسميع كاملاً دون إنترنت بعد التنزيل الأول. الصوت لا '
             'يغادر جهازك. تصحيح الكلمات فقط — المحرك لا يقيّم التجويد أو '
             'مخارج الحروف.',
-            style: TextStyle(color: Colors.grey),
+            style: const TextStyle(color: muted),
           ),
         ],
       ),
@@ -352,24 +355,24 @@ class _RecitationScreenState extends State<RecitationScreen> {
             ? Icons.check_circle
             : Icons.error;
     final color = unknown
-        ? Colors.grey
+        ? muted
         : ok
-            ? Colors.green
-            : Colors.red;
+            ? success
+            : error;
     return ListTile(
       leading: Icon(icon, color: color),
-      title: Text(title),
-      subtitle: Text(subtitle),
+      title: Text(title,
+          style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle, style: const TextStyle(color: muted)),
       dense: true,
     );
   }
 
   Widget _buildChecklist() {
     final info = _modelInfo;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
+    return TilawaCard(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
           children: [
             _checkRow(
               title: 'النموذج ($_tier)',
@@ -421,19 +424,17 @@ class _RecitationScreenState extends State<RecitationScreen> {
             ),
           ],
         ),
-      ),
     );
   }
 
   Widget _buildModePicker() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('وضع التسميع',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+    return TilawaCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('وضع التسميع',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             SegmentedButton<RecitationMode>(
               segments: RecitationMode.values
@@ -444,10 +445,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
               onSelectionChanged: (s) => setState(() => _mode = s.first),
             ),
             const SizedBox(height: 8),
-            Text(_mode.description,
-                style: const TextStyle(color: Colors.grey)),
-          ],
-        ),
+          Text(_mode.description,
+              style: const TextStyle(color: muted)),
+        ],
       ),
     );
   }
@@ -472,14 +472,13 @@ class _RecitationScreenState extends State<RecitationScreen> {
   }
 
   Widget _buildPassagePicker() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('المقطع',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+    return TilawaCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('المقطع',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             DropdownButton<int>(
               value: _custom ? -1 : _presetIndex,
@@ -562,10 +561,10 @@ class _RecitationScreenState extends State<RecitationScreen> {
                 ],
               ),
             ],
-            const SizedBox(height: 8),
-            Text('المقطع المختار: $_passageLabel'),
-          ],
-        ),
+          const SizedBox(height: 8),
+          Text('المقطع المختار: $_passageLabel',
+              style: const TextStyle(color: muted)),
+        ],
       ),
     );
   }
@@ -574,14 +573,13 @@ class _RecitationScreenState extends State<RecitationScreen> {
     final last = widget.progressStore.lastPassage;
     final topErrors = widget.progressStore.topErrorAyahs(limit: 5);
     if (last == null && topErrors.isEmpty) return const SizedBox.shrink();
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('التقدم المحفوظ',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+    return TilawaCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('التقدم المحفوظ',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             if (last != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -590,10 +588,10 @@ class _RecitationScreenState extends State<RecitationScreen> {
                 '${widget.progressStore.lastDate != null ? ' • ${widget.progressStore.lastDate!.day}/${widget.progressStore.lastDate!.month}/${widget.progressStore.lastDate!.year}' : ''}',
               ),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
+              SecondaryButton(
+                label: 'استئناف آخر مراجعة',
+                icon: Icons.play_arrow,
                 onPressed: _applyResume,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('استئناف آخر مراجعة'),
               ),
             ],
             if (topErrors.isNotEmpty) ...[
@@ -603,38 +601,27 @@ class _RecitationScreenState extends State<RecitationScreen> {
                 Text(
                     '• سورة ${surahName(e.$1)}، الآية ${e.$2} — ${e.$3} مرات'),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
+              SecondaryButton(
+                label: 'تسميع آيات الأخطاء',
+                icon: Icons.replay,
                 onPressed: _applyErrorAyahs,
-                icon: const Icon(Icons.replay),
-                label: const Text('تسميع آيات الأخطاء'),
               ),
             ],
           ],
         ),
-      ),
     );
   }
 
   Widget _buildErrorCard() {
-    return Card(
-      color: Colors.red.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-            if (_micState.needsAppSettings) ...[
-              const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: _openSettings,
-                icon: const Icon(Icons.settings),
-                label: const Text('فتح إعدادات التطبيق'),
-              ),
-            ],
-          ],
-        ),
-      ),
+    return ErrorCard(
+      message: _error,
+      child: _micState.needsAppSettings
+          ? PrimaryButton(
+              label: 'فتح إعدادات التطبيق',
+              icon: Icons.settings,
+              onPressed: _openSettings,
+            )
+          : null,
     );
   }
 }

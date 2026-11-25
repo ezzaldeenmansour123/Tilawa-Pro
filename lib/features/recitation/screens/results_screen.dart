@@ -8,6 +8,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
 import '../models.dart';
 import '../progress_store.dart';
 import '../session_logic.dart';
@@ -99,31 +101,36 @@ class _ResultsScreenState extends State<ResultsScreen> {
       child: Scaffold(
         appBar: AppBar(title: const Text('نتيجة الجلسة')),
         body: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(spacePage),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'سورة ${surahName(r.surah)} — الآيات '
-                      '${r.fromAyah}–${r.toAyah}',
-                      style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 4),
-                    Text('الوضع: ${r.mode.label} • النموذج: ${r.tier}'),
-                    Text(
-                        'المدة: ${r.duration.inMinutes} دقيقة '
-                        '${r.duration.inSeconds % 60} ثانية'
-                        '${r.segments > 1 ? ' • المقاطع: ${r.segments}' : ''}'),
-                    Text(_saved
+            TilawaCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'سورة ${surahName(r.surah)} — الآيات '
+                    '${r.fromAyah}–${r.toAyah}',
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('الوضع: ${r.mode.label} • النموذج: ${r.tier}',
+                      style: const TextStyle(color: muted)),
+                  Text(
+                    'المدة: ${r.duration.inMinutes} دقيقة '
+                    '${r.duration.inSeconds % 60} ثانية'
+                    '${r.segments > 1 ? ' • المقاطع: ${r.segments}' : ''}',
+                    style: const TextStyle(color: muted),
+                  ),
+                  Text(
+                    _saved
                         ? 'تم حفظ النتيجة على جهازك.'
-                        : 'جارٍ حفظ النتيجة…'),
-                  ],
-                ),
+                        : 'جارٍ حفظ النتيجة…',
+                    style: TextStyle(
+                        color: _saved ? success : muted,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 12),
@@ -134,25 +141,25 @@ class _ResultsScreenState extends State<ResultsScreen> {
             _notesSection(r),
             const SizedBox(height: 16),
             if (r.reReciteRange != null)
-              FilledButton.icon(
+              PrimaryButton(
                 onPressed: _reReciteErrors,
-                icon: const Icon(Icons.replay),
-                label: Text(
-                    'إعادة تسميع الأخطاء (الآيات ${r.errorAyahs.first}–${r.errorAyahs.last})'),
+                icon: Icons.replay,
+                label:
+                    'إعادة تسميع الأخطاء (الآيات ${r.errorAyahs.first}–${r.errorAyahs.last})',
               ),
             if (r.reReciteRange != null) const SizedBox(height: 8),
-            OutlinedButton.icon(
+            SecondaryButton(
               onPressed: () =>
                   Navigator.popUntil(context, (route) => route.isFirst),
-              icon: const Icon(Icons.home),
-              label: const Text('رجوع إلى الإعداد'),
+              icon: Icons.home,
+              label: 'رجوع إلى الإعداد',
             ),
             const SizedBox(height: 12),
             const Text(
               'النسبة محسوبة من الكلمات المطابقة على كلمات الآيات التي تمت '
               'مراجعتها فعلاً. الآيات التي لم يلتقط المحرك فيها أي كلمة لا '
               'تُحسب صحيحة ولا خاطئة — أعد تسميعها.',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: muted),
             ),
           ],
         ),
@@ -162,25 +169,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   Widget _statGrid(SessionResult r) {
     Widget stat(String label, String value, {Color? color}) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(label, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      );
+      return StatTile(value: value, label: label, color: color);
     }
 
     return GridView.count(
@@ -195,9 +184,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
         stat('كلمات مطابقة',
             '${r.matchedWords} / ${r.totalWords}'),
         stat('أخطاء مكتشفة', '${r.errorCount}',
-            color: r.errorCount > 0 ? Colors.red : null),
+            color: r.errorCount > 0 ? error : null),
         stat('كلمات تحتاج مراجعة', '${r.needsReviewCount}',
-            color: r.needsReviewCount > 0 ? Colors.amber.shade800 : null),
+            color: r.needsReviewCount > 0 ? warning : null),
         stat(
           'نسبة المطابقة النصية',
           r.matchPercent == null
@@ -206,7 +195,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
           color: r.matchPercent == null
               ? null
               : r.matchPercent! >= 90
-                  ? Colors.green.shade700
+                  ? success
                   : null,
         ),
         stat(
@@ -219,13 +208,18 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   Widget _errorsSection(SessionResult r) {
     if (r.errors.isEmpty) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'لا توجد أخطاء مؤكدة في هذه الجلسة — أحسنت.',
-            style: TextStyle(fontSize: 16),
-          ),
+      return const TilawaCard(
+        child: Row(
+          children: [
+            Icon(Icons.check_circle, color: success),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'لا توجد أخطاء مؤكدة في هذه الجلسة — أحسنت.',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -240,7 +234,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
         ...r.errors.map((e) {
           final conf = _confidenceOf(e.location);
           return ListTile(
-            leading: const Icon(Icons.error, color: Colors.red),
+            leading: const Icon(Icons.error, color: error),
             title: Text(
               '${errorClassLabel(e.errorClass)} — الآية ${e.location.ayah}، '
               'الكلمة ${e.location.word}: «${_wordAt(e.location)}»',
@@ -272,7 +266,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
         ),
         const Text(
           'أعد تسميعها في جلسة لاحقة؛ المحرك لم يكن واثقاً فيها.',
-          style: TextStyle(color: Colors.grey),
+          style: TextStyle(color: muted),
         ),
       ],
     );
@@ -285,7 +279,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
       children: [
         const SizedBox(height: 8),
         ...r.notes.map((n) => ListTile(
-              leading: const Icon(Icons.check_circle, color: Colors.green),
+              leading: const Icon(Icons.check_circle, color: success),
               title: Text(n),
             )),
       ],
