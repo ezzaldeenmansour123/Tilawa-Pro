@@ -10,8 +10,11 @@
 //   (manifest حقيقي في assets/packages، 7 ملفات موثقة بالبصمات).
 // - باقي مدخلات الكتالوج (10) بلا manifest منشور بعد، فتُعرض «قيد الإعداد»
 //   دون زر تنزيل — لا يُعرض زر وهمي.
-// - حزمتا نموذج التسميع (ai-model-lite/full) معلّقتان: المحرك غير مدمج
-//   قبل قرار GO موثّق بعد اختبار الهاتف (انظر docs/phase0-1).
+// - حزمتا نموذج التسميع (ai-model-lite/full) مدمجتان في التطبيق منذ
+//   v1.1.0+1 (المحرك موصول في main.dart): بطاقتاهما تعرضان الحالة
+//   الحية من ModelManager (النموذج + المرجع + WASM + الحزمة) مع زر
+//   يفتح صفحة «النموذج والتنزيل» الحقيقية — لا شارة تعليق قديمة.
+//   (Phase 2, 2.5: أُزيلت شارة «معلّقة — محرك التسميع غير مدمج…».)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:io';
@@ -23,6 +26,10 @@ import 'package:path_provider/path_provider.dart';
 import 'download_manager.dart';
 import 'package_catalog.dart';
 import 'package_models.dart';
+import '../recitation/model_manager.dart';
+import '../recitation/screens/model_screen.dart';
+import '../recitation/speech_engine.dart';
+import '../recitation/webview_engine.dart';
 
 /// معرّف الحزمة الوحيدة الجاهزة (manifest منشور في الأصول).
 const String kFatihaPackageId = 'reciter-afasy-fatiha-64';
@@ -43,6 +50,13 @@ class _PackagesPageState extends State<PackagesPage> {
   String? _error;
   String? _notice;
   int _usedBytes = 0;
+
+  /// Live recitation-model status (Phase 2, 2.5): the ai-model catalog
+  /// entries read their real state from ModelManager instead of a stale
+  /// «suspended» badge. Null until _init's separate guarded attempt.
+  ModelManager? _modelManager;
+  Map<String, ModelInfo> _aiStatus = {};
+  bool _aiStatusLoaded = false;
 
   @override
   void initState() {
@@ -73,6 +87,46 @@ class _PackagesPageState extends State<PackagesPage> {
         _loading = false;
       });
     }
+    // Live AI-model status, guarded separately: a failure here must not
+    // break the packages page — the ai-model cards then show a fallback.
+    await _refreshAiStatus();
+  }
+
+  Future<void> _refreshAiStatus() async {
+    try {
+      final mm = _modelManager ?? await ModelManager.create();
+      final lite = await mm.status('lite');
+      final full = await mm.status('full');
+      if (!mounted) return;
+      setState(() {
+        _modelManager = mm;
+        _aiStatus = {'lite': lite, 'full': full};
+        _aiStatusLoaded = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _aiStatusLoaded = true);
+    }
+  }
+
+  /// Opens the real model-download page for [tier].
+  Future<void> _openModelPage(String tier) async {
+    final mm = _modelManager;
+    if (mm == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('النموذج والتنزيل')),
+          body: ModelScreen(
+            manager: mm,
+            engine: WebViewEngine(modelManager: mm),
+            initialTier: tier,
+          ),
+        ),
+      ),
+    );
+    await _refreshAiStatus();
   }
 
   PackageRecord? get _fatihaRecord {
@@ -231,7 +285,7 @@ class _PackagesPageState extends State<PackagesPage> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
               const Text(
-                  'هذه الحزم بلا manifest منشور بعد، فلا زر تنزيل لها حتى يُنشر manifest موثّق بالحجوم والبصمات.',
+                  'الحزم غير نموذجي التسميع بلا manifest منشور بعد، فلا زر تنزيل لها حتى يُنشر manifest موثّق بالحجوم والبصمات. نموذجا التسميع يُداران من صفحة «النموذج والتنزيل» — حالتهما الحية أدناه.',
                   style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
               const SizedBox(height: 8),
               for (final p in packageCatalog) _pendingCard(p),
@@ -345,8 +399,59 @@ class _PackagesPageState extends State<PackagesPage> {
     );
   }
 
+  String _aiModelStatusText(String tier) {
+    if (!_aiStatusLoaded) return 'جارٍ قراءة الحالة…';
+    final info = _aiStatus[tier];
+    if (info == null) return 'تعذّرت قراءة الحالة — افتح صفحة النموذج.';
+    return switch (info.status) {
+      ModelStatus.ready =>
+        'مثبَّت — جاهز (النموذج + المرجع + WASM + الحزمة متحقَّق منها)',
+      ModelStatus.notInstalled => 'غير مثبَّت بعد',
+      ModelStatus.downloading => 'جارٍ التنزيل…',
+      ModelStatus.failed => 'يحتاج تنزيلاً أو إصلاحاً: ${info.error ?? ''}',
+    };
+  }
+
   Widget _pendingCard(CatalogPackage p) {
     final isAi = p.kind == PackageKind.aiModel;
+    if (isAi) {
+      // Live ModelManager status + a real link to the model page (2.5e).
+      // The old «معلّقة — محرك التسميع غير مدمج…» badge is gone: the
+      // engine has been wired into the app since v1.1.0+1.
+      final tier = p.id == 'ai-model-lite' ? 'lite' : 'full';
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(p.titleAr,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text('الحجم: ${p.displaySize}',
+                    style:
+                        const TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Text(p.licenseNote,
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.grey, height: 1.7)),
+                const SizedBox(height: 6),
+                Text('الحالة: ${_aiModelStatusText(tier)}',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: _modelManager == null
+                      ? null
+                      : () => _openModelPage(tier),
+                  icon: const Icon(Icons.memory),
+                  label: const Text('فتح صفحة النموذج والتنزيل'),
+                ),
+              ]),
+        ),
+      );
+    }
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -360,10 +465,8 @@ class _PackagesPageState extends State<PackagesPage> {
           Text(p.licenseNote,
               style: const TextStyle(fontSize: 12, color: Colors.grey, height: 1.7)),
           const SizedBox(height: 6),
-          Chip(
-            label: Text(isAi
-                ? 'معلّقة — محرك التسميع غير مدمج قبل قرار GO بعد اختبار الهاتف'
-                : 'قيد الإعداد — لا يوجد manifest منشور بعد'),
+          const Chip(
+            label: Text('قيد الإعداد — لا يوجد manifest منشور بعد'),
           ),
         ]),
       ),
