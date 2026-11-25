@@ -202,6 +202,12 @@ jobs:
           # throws during evaluation dies before defining window.TilawaPro
           # (the poc-14 failure mode) and would still pass `test -s`.
           node smoke-bundle.mjs
+          # Early env-probe unit tests (2026-11-26 JSEP/WASM repair):
+          # web/test-env-probe.mjs exercises web/src/env_probe.js in
+          # Node with shims — no WebView needed. The probe is what names
+          # the cause of the next failed load, so its own tests gate the
+          # build like the smoke test does.
+          node test-env-probe.mjs
           ls -lh ../assets/web/bundle.js
 
       # فحص صريح لحجم حزمة الويب — درس poc-12: تهيئة WebView للمحرك
