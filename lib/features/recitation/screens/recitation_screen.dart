@@ -73,6 +73,13 @@ class _RecitationScreenState extends State<RecitationScreen> {
   /// NOT red — red before any attempt wrongly suggested a failure.
   bool _engineLoadAttempted = false;
 
+  /// True when the last load attempt FAILED (2026-11-26): the engine row
+  /// then says so in red instead of keeping the stale «لم يُحمَّل بعد»
+  /// subtitle — a failed load and a never-attempted load are different
+  /// states and must not share one label. The error card below still
+  /// carries the actual error text.
+  bool _engineLoadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -169,7 +176,12 @@ class _RecitationScreenState extends State<RecitationScreen> {
           },
         );
         loadMs = DateTime.now().difference(t0).inMilliseconds;
-        if (mounted) setState(() => _lastLoadMs = loadMs);
+        if (mounted) {
+          setState(() {
+            _lastLoadMs = loadMs;
+            _engineLoadFailed = false;
+          });
+        }
       } else {
         loadMs = _lastLoadMs;
       }
@@ -200,7 +212,17 @@ class _RecitationScreenState extends State<RecitationScreen> {
       );
       await _refreshStatus();
     } on SpeechEngineException catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          // Only a load failure marks the engine row failed: a model /
+          // WASM / microphone failure is already named on its own row
+          // or in the error card, and must not repaint the engine row.
+          if (_engineLoadAttempted && !_engineReady) {
+            _engineLoadFailed = true;
+          }
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = 'خطأ غير متوقع: $e');
     } finally {
@@ -375,7 +397,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
               title: 'المحرك',
               subtitle: _engineReady
                   ? 'محمَّل (${widget.engine.loadedTier})'
-                  : 'لم يُحمَّل بعد — يُحمَّل عند بدء التسميع',
+                  : _engineLoadFailed
+                      ? 'فشل تحميل المحرك — راجع رسالة الخطأ أدناه'
+                      : 'لم يُحمَّل بعد — يُحمَّل عند بدء التسميع',
               ok: _engineReady,
               // Neutral grey before the first load attempt (2.3e): red
               // here used to suggest a failure when nothing had failed.
@@ -436,7 +460,12 @@ class _RecitationScreenState extends State<RecitationScreen> {
       ],
       selected: {_tier},
       onSelectionChanged: (s) async {
-        setState(() => _tier = s.first);
+        setState(() {
+          _tier = s.first;
+          // A different tier is a different engine load: a past failure
+          // belongs to the old tier, not this row.
+          _engineLoadFailed = false;
+        });
         await _refreshStatus();
       },
     );

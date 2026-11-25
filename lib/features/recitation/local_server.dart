@@ -81,6 +81,26 @@ class LocalServer {
     res.headers.add('Cross-Origin-Resource-Policy', 'same-origin');
   }
 
+  /// Registry paths the @tilawa/core loader fetches, mapped to the flat
+  /// files ModelManager stores. Keys are the path below `/models/`;
+  /// values are the flat file names in the model directory. Only the two
+  /// tiers the registry defines are listed — anything else is not a
+  /// known model and must 404 rather than serve a wrong file.
+  static const _registryModelPaths = {
+    'spliced-clean/1-int8/model.onnx': 'model-full.onnx',
+    'spliced-clean-lite/1-int8/model.onnx': 'model-lite.onnx',
+  };
+
+  File _resolveModelFile(String path) {
+    final rel = path.substring(8); // strip '/models/'
+    final flat = _registryModelPaths[rel];
+    if (flat != null) {
+      _log('registry model path $path -> $flat');
+      return File('${_modelDir.path}/$flat');
+    }
+    return File('${_modelDir.path}/$rel');
+  }
+
   Future<void> _handle(HttpRequest req) async {
     // 2.2 (Phase 2): the /ort/ branch below is VERIFIED fixed — it serves
     // File('${_modelDir.path}$path') where path starts with '/', exactly
@@ -96,7 +116,20 @@ class LocalServer {
       } else if (path == '/bundle.js') {
         await _serveAsset(req, 'assets/web/bundle.js');
       } else if (path.startsWith('/models/')) {
-        await _serveFile(req, File('${_modelDir.path}/${path.substring(8)}'));
+        // Registry-path mapping (2026-11-26 404 fix): @tilawa/core's
+        // loader ignores the `model` URL the bridge passes and fetches
+        // the model by REGISTRY path — `models/<id>/<version>/model.onnx`
+        // relative to the page — while ModelManager stores the file FLAT
+        // as `model-<tier>.onnx`. The generic mapping below used to turn
+        // that registry path into `<modelDir>/spliced-clean/1-int8/
+        // model.onnx`, which does not exist, so every load 404'd with
+        // "404 fetching models/spliced-clean/1-int8/model.onnx". Map the
+        // two registry paths the loader actually requests to the flat
+        // files. Any other /models/ path keeps the generic mapping
+        // (ref-v2.json, model-<tier>.onnx); a path that matches neither
+        // a registry entry nor an existing file 404s in _serveFile and
+        // is recorded by the request log line.
+        await _serveFile(req, _resolveModelFile(path));
       } else if (path.startsWith('/ort/')) {
         // onnxruntime-web WASM files, downloaded by tools/download_assets.py
         // into <modelDir>/ort/<version>/.
@@ -141,7 +174,7 @@ class LocalServer {
       _isolationHeaders(req.response);
       req.response
         ..statusCode = HttpStatus.notFound
-        ..write('model file not found');
+        ..write('model file not found: ${req.uri.path}');
       await req.response.close();
       return;
     }

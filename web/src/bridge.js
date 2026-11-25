@@ -10,6 +10,12 @@
 // Every engine event is forwarded to Dart through the `TilawaBridge`
 // JavaScriptChannel as JSON:
 //   {type:"ready", capabilities:{...}}
+//   {type:"probe", result:"passed"} (the loader's warmup probe ran and
+//     returned structurally valid output — explicit evidence, never
+//     inferred from ready alone)
+//   {type:"stage", stage:"load-onnx"|"create-session"} (load progress
+//     inside init, so Dart can name the stage a hang or failure stopped
+//     at instead of timing out on a generic "loading model")
 //   {type:"position", event:{...}}   (position events, with timeMs audio clock)
 //   {type:"checker", event:{...}}    (checker events, suspected/confirmed/...)
 //   {type:"modelLoadMs", ms, backend}
@@ -58,13 +64,38 @@ window.TilawaPro = {
       // and SharedArrayBuffer works — request threads > 1 so the loader
       // uses the threaded build that actually exists.
       const threads = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4));
+      // 2026-11-26 404 + tier fix: loadWebModel derives the tier ONLY
+      // from its `tier` option (default "full") and IGNORES the `model`
+      // URL entirely — the loader fetches `<registry base>/model.onnx`
+      // from its bundled registry instead. The bridge used to pass only
+      // `model: opts.modelUrl`, so a lite pick silently loaded the FULL
+      // model (and 404'd on models/spliced-clean/1-int8/model.onnx
+      // because the server had no such file). Pass the tier explicitly.
+      post({ type: 'stage', stage: 'load-onnx' });
       const model = await loadWebModel({
+        tier: opts.tier,
         model: opts.modelUrl,
         reference,
         wasmPaths: opts.wasmPaths,
         threads,
       });
+      // loadWebModel resolves only after its internal warmup probe (a
+      // real session run on zeroed, silence-shaped inputs, checking the
+      // run returns structurally valid output) succeeds — report that
+      // result EXPLICITLY: a silent probe is not evidence, and Dart must
+      // not declare ready on a load whose probe never reported.
+      post({ type: 'probe', result: 'passed' });
+      post({ type: 'stage', stage: 'create-session' });
       tilawa = await createTilawa({ model, reference });
+      // Reaching here means the model loaded AND probed successfully —
+      // ready is never declared on a failed or unprobed load.
+      // Report the model that was ACTUALLY loaded (from the loader's own
+      // manifest), not the tier Dart asked for: if the bundle is stale
+      // or the tier mismatched, Dart must see the truth and fail loudly
+      // instead of showing a wrong "ready" card.
+      const loadedId = (model && model.manifest && model.manifest.id) || null;
+      const loadedTier = loadedId === 'spliced-clean-lite' ? 'lite'
+        : loadedId === 'spliced-clean' ? 'full' : opts.tier;
       const ms = Math.round(performance.now() - t0);
       // The capabilities event arrives on the first session, but the PoC
       // also needs the backend + load time now: subscribe to a throwaway
@@ -78,14 +109,14 @@ window.TilawaPro = {
       post({
         type: 'ready',
         capabilities: {
-          modelVersion: opts.tier === 'lite'
-            ? 'spliced-clean-lite@1-int8'
-            : 'spliced-clean@1-int8',
+          modelVersion: (loadedId || (opts.tier === 'lite'
+            ? 'spliced-clean-lite'
+            : 'spliced-clean')) + '@1-int8',
           modelRelease: '1',
           referenceVersion: reference.version || 'ref-v2',
           sdkVersion: '1.0.0-rc.1',
           modelSha256: 'verified-by-dart-before-load',
-          tier: opts.tier,
+          tier: loadedTier,
           backend: 'unknown-yet',
           supported: ['wrong_word', 'omitted_word', 'added_word', 'skipped_passage'],
           unsupported: ['tajweed', 'pronunciation', 'hadr', 'children'],
