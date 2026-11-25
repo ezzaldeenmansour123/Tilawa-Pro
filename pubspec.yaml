@@ -1,7 +1,7 @@
-name: tilawa
-description: "تلاوة — تطبيق القرآن الكريم: المصحف العثماني، التفاسير، التلاوة الصوتية، تذكير الورد"
+name: tilawa_pro
+description: "تلاوة برو — تطبيق القرآن الكريم: المصحف العثماني، التفاسير، التلاوة الصوتية، التسميع الذكي، تذكير الورد"
 publish_to: "none"
-version: 1.0.0+1
+version: 1.1.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -26,6 +26,12 @@ dependencies:
   flutter_timezone: ^5.1.1
   just_audio: ^0.10.6
   http: ^1.6.0
+  # اختيار ملف للاستيراد (ملف تصدير JSON) — واجهة الإعدادات فقط.
+  file_picker: ^8.1.2
+  # التسميع الذكي (من Tilawa PoC): WebView يستضيف محرك yazinsai/tilawa،
+  # وpermission_handler لإذن الميكروفون (بما فيه الرفض الدائم → الإعدادات).
+  webview_flutter: ^4.0.0
+  permission_handler: ^11.0.0
 
 dev_dependencies:
   flutter_test:
@@ -38,6 +44,10 @@ flutter:
     - assets/quran.db
     - assets/quran.db.sha256
     - assets/fonts/
+    - assets/packages/
+    # التسميع الذكي: الخادم المحلي يقرأ الحزمة عبر rootBundle،
+    # وبدون الإعلان لن تُضمَّن في APK فيتعطّل التسميع وقت التشغيل.
+    - assets/web/
   fonts:
     - family: Amiri
       fonts:

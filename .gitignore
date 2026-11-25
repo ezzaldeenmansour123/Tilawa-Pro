@@ -53,7 +53,8 @@ app.*.map.json
 **/android/**/ios/Flutter/flutter_export_environment.sh
 android/
 ios/
-pubspec.lock
+# pubspec.lock غير مستثناة عمداً في تلاوة برو: تُثبَّت بعد بناء أخضر
+# لتثبيت إصدارات التبعيات (درس من Tilawa-PoC).
 
 # Generated library (built in CI from the pinned datasets)
 assets/quran.db
