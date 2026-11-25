@@ -1,0 +1,136 @@
+SQLite 3.45.1 | FTS5 experimental DB, 9 sample ayahs
+Sample ayahs (real fragments, test fixtures):
+  1:1  بسم الله الرحمن الرحيم
+  2:3  الذين يؤمنون بالغيب ويقيمون الصلاة
+  2:43  وأقيموا الصلاة وآتوا الزكاة
+  2:153  يا أيها الذين آمنوا استعينوا بالصبر والصلاة
+  2:155  وبشر الصابرين الذين إذا أصابتهم مصيبة قالوا إنا لله وإنا إليه راجعون
+  4:103  إن الصلاة كانت على المؤمنين كتابا موقوتا
+  6:59  وعنده مفاتح الغيب لا يعلمها إلا هو
+  2:2  ذلك الكتاب لا ريب فيه هدى للمتقين
+  9:71  والمؤمنون والمؤمنات بعضهم أولياء بعض
+Tafsir texts are SYNTHETIC fixtures, not real tafsir quotations.
+
+-- OLD index (search_norm, unrestricted strip) --
+  1:1 norm=[بسم سم الله الرحمن رحمن الرحيم رحيم]
+  2:3 norm=[الذين ذين يؤمنون بالغيب غيب ويقيمون يقيمون الصلاه صلاه]
+  2:43 norm=[واقيموا اقيموا الصلاه صلاه واتوا اتوا الزكاه زكاه]
+  2:153 norm=[يا ايها الذين ذين امنوا استعينوا بالصبر صبر والصلاه صلاه]
+  2:155 norm=[وبشر بشر الصابرين صابرين الذين ذين اذا اصابتهم مصيبه قالوا انا لله له وانا انا اليه راجعون]
+  4:103 norm=[ان الصلاه صلاه كانت انت علي المؤمنين مؤمنين كتابا تابا موقوتا]
+  6:59 norm=[وعنده عنده مفاتح الغيب غيب لا يعلمها الا هو]
+  2:2 norm=[ذلك الكتاب كتاب لا ريب فيه يه هدي للمتقين متقين]
+  9:71 norm=[والمؤمنون مؤمنون والمؤمنات مؤمنات بعضهم عضهم اولياء بعض عض]
+
+-- NEW index (search_norm, restricted strip) --
+  1:1 norm=[بسم الله الرحمن رحمن الرحيم رحيم]
+  2:3 norm=[الذين ذين يؤمنون بالغيب غيب ويقيمون يقيمون الصلاه صلاه]
+  2:43 norm=[واقيموا اقيموا الصلاه صلاه واتوا الزكاه زكاه]
+  2:153 norm=[يا ايها الذين ذين امنوا استعينوا بالصبر صبر والصلاه صلاه]
+  2:155 norm=[وبشر الصابرين صابرين الذين ذين اذا اصابتهم مصيبه قالوا انا لله وانا اليه راجعون]
+  4:103 norm=[ان الصلاه صلاه كانت علي المؤمنين مؤمنين كتابا موقوتا]
+  6:59 norm=[وعنده مفاتح الغيب غيب لا يعلمها الا هو]
+  2:2 norm=[ذلك الكتاب كتاب لا ريب فيه هدي للمتقين متقين]
+  9:71 norm=[والمؤمنون مؤمنون والمؤمنات مؤمنات بعضهم اولياء بعض]
+
+==============================================================================
+BASELINE (old index + old _searchExpr + old LIKE tafsir)
+==============================================================================
+
+-- QURAN — required --
+بالصلاة            expected {2:3,2:43,2:153,4:103} got {}               FAIL  [must succeed]
+والمؤمنين          expected {4:103}          got {}               FAIL  [must succeed]
+فالغيب             expected {2:3,6:59}       got {}               FAIL  [must succeed]
+للصابرين           expected {2:155}          got {}               FAIL  [must succeed]
+انت                expected {}               got {4:103}          FAIL  [must NOT find كانت (4:103)]
+سم                 expected {}               got {1:1}            FAIL  [must NOT find بسم (1:1)]
+تابا               expected {}               got {4:103}          FAIL  [must NOT find كتابا (4:103)]
+
+-- QURAN — extra probes --
+الصلاة             expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS  [bare ال-form (baseline already OK)]
+صلاة               expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS  [bare term]
+مؤمنون             expected {9:71}           got {9:71}           PASS  [bare term (text has والمؤمنون; passes with or without ال+t)]
+بالغيب             expected {2:3,6:59}       got {2:3}            FAIL  [desired {2:3,6:59}; baseline finds only literal بالغيب (2:3)]
+بصلاة              expected {}               got {}               PASS  [KNOWN TRADE-OFF of rule (b): remainder صلاة is 4 chars, not ال- — still 0]
+بصابرين            expected {2:155}          got {}               FAIL  [single-letter + long remainder (>=5) still strips]
+كانت               expected {4:103}          got {4:103}          PASS  [the real word itself must still be found]
+الذين يؤمنون       expected {2:3}            got {2:3}            PASS  [multi-term AND]
+بالصلاة والزكاة    expected {2:43}           got {}               FAIL  [multi-term AND, prefix forms]
+مؤمنين             expected {4:103}          got {4:103}          PASS  [bare term]
+للمتقين            expected {2:2}            got {2:2}            PASS  [للمتقين (baseline OK: literal token exists)]
+
+-- TAFSIR --
+بالصلاة            expected {2:3,2:153,4:103} got {}               FAIL  [FTS tafsir; NOT 2:43 (its tafsir has no صلاة) — scoping]
+الصابرين           expected {2:155}          got {2:155}          PASS  [FTS tafsir]
+انت                expected {}               got {4:103}          FAIL  [FTS tafsir must NOT match كانت in 4:103 tafsir]
+زكاة               expected {2:43}           got {2:43}           PASS  [FTS tafsir]
+سم                 expected {}               got {1:1}            FAIL  [FTS tafsir must NOT match بسم in 1:1 tafsir]
+الغيب              expected {2:3,6:59}       got {2:3,6:59}       PASS  [FTS tafsir]
+زكاه               expected {2:43}           got {}               FAIL  [ه-spelling query: FTS normalises both sides; LIKE cannot]
+الصلاه             expected {2:3,2:153,4:103} got {}               FAIL  [ه-spelling query: FTS normalises both sides; LIKE cannot]
+
+BASELINE (old index + old _searchExpr + old LIKE tafsir): 11/26 passed, 15 failed
+==============================================================================
+FIXED (new index + new query variants + FTS tafsir column)
+==============================================================================
+
+-- QURAN — required --
+بالصلاة            expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS  [must succeed]
+والمؤمنين          expected {4:103}          got {4:103}          PASS  [must succeed]
+فالغيب             expected {2:3,6:59}       got {2:3,6:59}       PASS  [must succeed]
+للصابرين           expected {2:155}          got {2:155}          PASS  [must succeed]
+انت                expected {}               got {}               PASS  [must NOT find كانت (4:103)]
+سم                 expected {}               got {}               PASS  [must NOT find بسم (1:1)]
+تابا               expected {}               got {}               PASS  [must NOT find كتابا (4:103)]
+
+-- QURAN — extra probes --
+الصلاة             expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS  [bare ال-form (baseline already OK)]
+صلاة               expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS  [bare term]
+مؤمنون             expected {9:71}           got {9:71}           PASS  [bare term (text has والمؤمنون; passes with or without ال+t)]
+بالغيب             expected {2:3,6:59}       got {2:3,6:59}       PASS  [desired {2:3,6:59}; baseline finds only literal بالغيب (2:3)]
+بصلاة              expected {}               got {}               PASS  [KNOWN TRADE-OFF of rule (b): remainder صلاة is 4 chars, not ال- — still 0]
+بصابرين            expected {2:155}          got {2:155}          PASS  [single-letter + long remainder (>=5) still strips]
+كانت               expected {4:103}          got {4:103}          PASS  [the real word itself must still be found]
+الذين يؤمنون       expected {2:3}            got {2:3}            PASS  [multi-term AND]
+بالصلاة والزكاة    expected {2:43}           got {2:43}           PASS  [multi-term AND, prefix forms]
+مؤمنين             expected {4:103}          got {4:103}          PASS  [bare term]
+للمتقين            expected {2:2}            got {2:2}            PASS  [للمتقين (baseline OK: literal token exists)]
+
+-- TAFSIR --
+بالصلاة            expected {2:3,2:153,4:103} got {2:3,2:153,4:103} PASS  [FTS tafsir; NOT 2:43 (its tafsir has no صلاة) — scoping]   | old-LIKE: {}
+الصابرين           expected {2:155}          got {2:155}          PASS  [FTS tafsir]   | old-LIKE: {2:155}
+انت                expected {}               got {}               PASS  [FTS tafsir must NOT match كانت in 4:103 tafsir]   | old-LIKE: {4:103}
+زكاة               expected {2:43}           got {2:43}           PASS  [FTS tafsir]   | old-LIKE: {2:43}
+سم                 expected {}               got {}               PASS  [FTS tafsir must NOT match بسم in 1:1 tafsir]   | old-LIKE: {1:1}
+الغيب              expected {2:3,6:59}       got {2:3,6:59}       PASS  [FTS tafsir]   | old-LIKE: {2:3,6:59}
+زكاه               expected {2:43}           got {2:43}           PASS  [ه-spelling query: FTS normalises both sides; LIKE cannot]   | old-LIKE: {}
+الصلاه             expected {2:3,2:153,4:103} got {2:3,2:153,4:103} PASS  [ه-spelling query: FTS normalises both sides; LIKE cannot]   | old-LIKE: {}
+
+FIXED (new index + new query variants + FTS tafsir column): 26/26 passed, 0 failed
+==============================================================================
+ABLATION — required Quran queries only (proves both halves needed)
+==============================================================================
+
+-- old index + NEW query --
+بالصلاة            expected {2:3,2:43,2:153,4:103} got {2:3,2:43,2:153,4:103} PASS
+والمؤمنين          expected {4:103}          got {4:103}          PASS
+فالغيب             expected {2:3,6:59}       got {2:3,6:59}       PASS
+للصابرين           expected {2:155}          got {2:155}          PASS
+انت                expected {}               got {4:103}          FAIL
+سم                 expected {}               got {1:1}            FAIL
+تابا               expected {}               got {4:103}          FAIL
+
+-- new index + OLD query --
+بالصلاة            expected {2:3,2:43,2:153,4:103} got {}               FAIL
+والمؤمنين          expected {4:103}          got {}               FAIL
+فالغيب             expected {2:3,6:59}       got {}               FAIL
+للصابرين           expected {2:155}          got {}               FAIL
+انت                expected {}               got {}               PASS
+سم                 expected {}               got {}               PASS
+تابا               expected {}               got {}               PASS
+
+Ablation verdict: old-index+new-query all-required-pass=False (expect False: FP tokens انت/سم/تابا survive in old index)
+Ablation verdict: new-index+old-query all-required-pass=False (expect False: prefix queries بالصلاة/والمؤمنين/فالغيب/للصابرين still fail)
+
+SUMMARY: baseline 15/26 failed (expected — these are the bugs); FIXED suite 0/26 failed.
+FINAL: ALL FIXED-SUITE TESTS PASSED — fix works on this fixture
