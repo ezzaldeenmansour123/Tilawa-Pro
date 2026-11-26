@@ -109,7 +109,9 @@ class _SessionScreenState extends State<SessionScreen> {
     _sub?.cancel();
     // If the user leaves mid-session (system back), end the engine
     // session so the mic is released and the log is closed.
-    if (_phase == SessionPhase.recording || _phase == SessionPhase.paused) {
+    if (_phase == SessionPhase.recording ||
+        _phase == SessionPhase.paused ||
+        _phase == SessionPhase.failed) {
       unawaited(widget.engine.endSession());
     }
     super.dispose();
@@ -169,7 +171,14 @@ class _SessionScreenState extends State<SessionScreen> {
         )
         .listen(
           _onEvent,
-          onError: (e) => setState(() => _error = e.toString()),
+          onError: (e) => setState(() {
+            // A fatal stream error (e.g. the mic could not be opened)
+            // ends the session honestly: the dedicated failed screen
+            // (error + «رجوع إلى الإعداد») replaces the fake
+            // «جارٍ التسجيل» state that used to keep running with no mic.
+            _phase = SessionPhase.failed;
+            _error = e.toString();
+          }),
         );
   }
 
