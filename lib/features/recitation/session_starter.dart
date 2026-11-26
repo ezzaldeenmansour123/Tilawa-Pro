@@ -109,6 +109,13 @@ Future<({SessionResult? result, String? error, SessionStartStatus status})>
         status: status,
       );
     }
+    if (!context.mounted) {
+      return (
+        result: null,
+        error: 'أُلغيت الجلسة قبل بدئها.',
+        status: status,
+      );
+    }
     // 6. Push the live session page and await its end.
     final result = await Navigator.push<SessionResult?>(
       context,
