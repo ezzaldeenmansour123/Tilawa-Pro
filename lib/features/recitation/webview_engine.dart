@@ -10,10 +10,15 @@
 //      them to the session EventLog.
 //
 // Known unknowns (to be measured on the S22 Ultra, NOT assumed):
-//   - Whether the WebView grants microphone access after the app-level
-//     RECORD_AUDIO permission (webview_flutter has no onPermissionRequest
-//     API; if the WebView denies the mic, this adapter fails loudly with
-//     reason "unavailable" and the PoC records NO-GO for the WebView path).
+//   - (RESOLVED 2026-11-26, pro-build-34 phone test) The WebView does NOT
+//     grant microphone access from the app-level RECORD_AUDIO permission
+//     alone: the page's getUserMedia triggers a WebChromeClient
+//     PermissionRequest that is denied with no handler, so the bridge
+//     reported "Permission denied" while setup showed the mic as allowed.
+//     The fix registers AndroidWebViewController
+//     .setOnPlatformPermissionRequest (webview_flutter_android 4.14.1),
+//     granting ONLY the microphone. The old note claiming "webview_flutter
+//     has no onPermissionRequest API" was wrong.
 //   - Whether WebGPU is available inside the WebView (the `backend` field
 //     of the capabilities event tells us: "webgpu" | "wasm" | "cpu").
 //   - WASM is multi-threaded in Android WebView now that LocalServer
@@ -29,6 +34,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'event_log.dart';
 import 'local_server.dart';
@@ -42,6 +48,15 @@ import 'speech_engine.dart';
 /// with pubspec.yaml and the '1.1.0+1' literals in main.dart by hand.
 /// A runtime-read version would need package_info_plus.
 const kAppVersion = '1.1.0+1';
+
+/// Whether a WebView permission request may be granted: exactly the
+/// microphone and nothing else. The page only ever asks for audio
+/// capture (getUserMedia audio-only); granting anything else (camera
+/// etc.) would be wrong. Pure function, unit-tested in
+/// test/webview_mic_permission_test.dart.
+bool shouldGrantMicPermission(Set<WebViewPermissionResourceType> types) =>
+    types.length == 1 &&
+    types.contains(WebViewPermissionResourceType.microphone);
 
 class WebViewEngine implements SpeechEngine {
   WebViewEngine({required this.modelManager});
@@ -220,6 +235,7 @@ class WebViewEngine implements SpeechEngine {
       Directory(modelManager.referenceFile.parent.path),
     );
     setStage('جارٍ تحميل صفحة المحرك…');
+    final controllerCreated = _controller == null;
     _controller ??= WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setOnConsoleMessage(_onConsoleMessage)
@@ -248,10 +264,25 @@ class WebViewEngine implements SpeechEngine {
         'TilawaBridge',
         onMessageReceived: _onBridgeMessage,
       );
-    // NOTE: microphone permission is requested by the UI (permission_handler)
-    // BEFORE load() is called. If the WebView still refuses getUserMedia,
-    // the bridge reports {type:"error", reason:"denied"|"unavailable"|
-    // "insecure-context"} and load() throws — recorded as a NO-GO data point.
+    // MICROPHONE (2026-11-26): register the WebView permission handler
+    // ONCE, when the controller is created (before loadRequest). The
+    // app-level RECORD_AUDIO permission (permission_handler, requested
+    // by the UI before load()) is NOT enough: the page's getUserMedia
+    // triggers a WebChromeClient PermissionRequest inside the WebView,
+    // and with no handler the WebView denies it — the pro-build-34
+    // phone test proved exactly that ("Permission denied" while setup
+    // showed the mic as allowed). Grant ONLY the microphone.
+    if (controllerCreated &&
+        _controller!.platform is AndroidWebViewController) {
+      await (_controller!.platform as AndroidWebViewController)
+          .setOnPlatformPermissionRequest((request) async {
+        if (shouldGrantMicPermission(request.types)) {
+          await request.grant();
+        } else {
+          await request.deny();
+        }
+      });
+    }
     _pageLoaded = Completer<void>();
     await _controller!.loadRequest(Uri.parse('${_server!.baseUrl}tilawa.html'));
     await _pageLoaded!.future.timeout(
