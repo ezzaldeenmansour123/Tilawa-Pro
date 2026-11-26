@@ -240,18 +240,38 @@ window.TilawaPro = {
       }
     });
     // Microphone -> session. Rejects with MicrophoneError on denial.
-    tilawa
-      .listen(session)
-      .then((m) => {
-        mic = m;
-      })
-      .catch((err) => {
-        post({
-          type: 'error',
-          message: 'تعذّر فتح الميكروفون: ' + (err && err.message ? err.message : String(err)),
-          reason: err && err.reason ? err.reason : 'unavailable',
-        });
+    // (2026-11-26) Two lessons from the phone tests:
+    //   1. The error NAME matters: MicrophoneError carries the original
+    //      DOMException as `cause`, and without its name ("NotReadableError"
+    //      vs "NotAllowedError") Dart cannot tell a denied mic from a
+    //      busy audio source. Post the name with the message.
+    //   2. "unavailable" (e.g. NotReadableError — the audio source is
+    //      busy or the driver hiccuped) is often transient: retry
+    //      listen() ONCE after a short pause before reporting failure.
+    const micErrorText = (err) => {
+      const name = (err && err.cause && err.cause.name) || (err && err.name) || '';
+      const msg = err && err.message ? err.message : String(err);
+      return 'تعذّر فتح الميكروفون' + (name ? ' [' + name + ']' : '') + ': ' + msg;
+    };
+    const openMic = async () => {
+      try {
+        mic = await tilawa.listen(session);
+      } catch (err) {
+        if (err && err.reason === 'unavailable') {
+          await new Promise((r) => setTimeout(r, 1500));
+          mic = await tilawa.listen(session);
+        } else {
+          throw err;
+        }
+      }
+    };
+    openMic().catch((err) => {
+      post({
+        type: 'error',
+        message: micErrorText(err),
+        reason: err && err.reason ? err.reason : 'unavailable',
       });
+    });
   },
 
   async stopSession() {
