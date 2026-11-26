@@ -20,7 +20,6 @@ import '../../../db.dart';
 import '../../memorization/hifz_page.dart';
 import '../../memorization/hifz_store.dart';
 import '../progress_store.dart';
-import '../session_logic.dart';
 import '../surah_names.dart';
 import '../tasmee_progress.dart';
 import '../webview_engine.dart';
