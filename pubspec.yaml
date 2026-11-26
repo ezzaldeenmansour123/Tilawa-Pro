@@ -34,10 +34,13 @@ dependencies:
   # التسميع الذكي (من Tilawa PoC): WebView يستضيف محرك yazinsai/tilawa،
   # وpermission_handler لإذن الميكروفون (بما فيه الرفض الدائم → الإعدادات).
   webview_flutter: ^4.0.0
-  # منح إذن الميكروفون داخل WebView (إصلاح 2026-11-26): إذن التطبيق
-  # وحده لا يكفي — الصفحة تطلب الإذن عبر WebChromeClient ويجب منحه
-  # من الكود عبر setOnPlatformPermissionRequest.
-  webview_flutter_android: ^4.14.1
+  # التقاط صوت التسميع أصلياً (2026-11-26): مصدر الصوت داخل WebView لا
+  # يشتغل على الهاتف (NotReadableError رغم منح الإذن)، فالصوت يُلتقط
+  # بـ AudioRecord عبر `record` (16 كيلوهرتز أحادي PCM16) ويُدفع إلى
+  # المحرك بـ session.pushAudio. الإصدار 6.1.1 — متوافق مع Flutter
+  # 3.50.1 بلا شك (الإصدار 7.x يرفع الحد الأدنى إلى Dart‏ ‎^3.12
+  # وFlutter‏ ‎>=3.44، ولا حاجة لميزاته هنا).
+  record: ^6.1.1
   permission_handler: ^11.0.0
 
 dev_dependencies:

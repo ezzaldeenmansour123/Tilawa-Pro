@@ -4,8 +4,25 @@
 //   init({assetBase, tier, modelUrl, referenceUrl, wasmPaths}) -> loads the
 //     model + reference from the localhost server, reports capabilities.
 //   startSession({mode, surah, fromAyah, toAyah})
+//   pushPcm(base64, sampleRate, seq) -> feeds one PCM16 frame to the
+//     engine session via session.pushAudio; posts pcm-ack / pcm-error.
 //   stopSession()
 //   dispose()
+//
+// AUDIO (2026-11-26 — native capture, Misbar-style): the microphone is
+// captured NATIVELY in Flutter (package `record`, 16 kHz mono PCM16)
+// and pushed here frame by frame. The WebView NEVER calls
+// getUserMedia / tilawa.listen() anymore: on the user's S22 Ultra the
+// WebView audio source genuinely will not start (NotReadableError
+// "Could not start audio source" persisted through the WebView
+// permission grant in pro-35 and the exact-name + retry in pro-36),
+// while the same phone's native recorder path is the standard Android
+// route. The engine is source-agnostic by design — @tilawa/core's web
+// startMicrophone itself only feeds session.pushAudio(gated, 16000)
+// (dist/web.js:152), and its react-native entry says: "The app pushes
+// PCM from its own recorder with session.pushAudio(samples, sampleRate)".
+// VAD: the web path's default is vad:false (dist/defaults.js:16), so
+// no VAD gating is lost by pushing raw PCM here.
 //
 // Every engine event is forwarded to Dart through the `TilawaBridge`
 // JavaScriptChannel as JSON:
@@ -18,6 +35,13 @@
 //     at instead of timing out on a generic "loading model")
 //   {type:"position", event:{...}}   (position events, with timeMs audio clock)
 //   {type:"checker", event:{...}}    (checker events, suspected/confirmed/...)
+//   {type:"pcm-ack", seq}            (one pushed PCM frame was consumed by
+//                                      the engine; Dart's backpressure ack)
+//   {type:"pcm-error", seq, message, name} (a pushed frame was rejected —
+//                                      the engine session is then dead, see
+//                                      session.js pushAudio: a failed push
+//                                      ends the session; Dart stops the
+//                                      native recorder and surfaces this)
 //   {type:"env-probe", probe:{...}} (NEW 2026-11-26: early environment
 //     probe, posted BEFORE loadWebModel — crossOriginIsolated,
 //     SharedArrayBuffer live check, navigator.gpu + requestAdapter,
@@ -25,8 +49,12 @@
 //     Posted even when the load later fails, so Dart can name the cause.
 //     See web/src/env_probe.js.)
 //   {type:"modelLoadMs", ms, backend}
-//   {type:"error", message, reason}  (incl. MicrophoneError reasons:
-//                                      denied | unavailable | insecure-context)
+//   {type:"error", message, reason}  (engine/load failures. The
+//                                      microphone no longer fails here:
+//                                      capture is native in Dart, so a
+//                                      mic failure arrives as a Dart-side
+//                                      NativeMicException on the event
+//                                      stream, not as a bridge error.)
 //     Since 2026-11-26 the load-error post ALSO carries the environment
 //     (crossOriginIsolated, sharedArrayBuffer, gpuInNavigator,
 //     providers, threadsApplied) so a failure string is never the only
@@ -59,7 +87,9 @@
 // therefore cannot fail a load; only the missing JSEP files could.
 //
 // Notes, from the upstream README (verified 2026-11-25):
-// - `listen()` needs a secure context; the Dart localhost server provides it.
+// - The WebView never calls `listen()`: audio arrives via pushPcm from
+//   the native recorder. The localhost server still provides the secure
+//   context the page (WASM) needs.
 // - Default confirm policy is "next-word" (a mistake is confirmed once the
 //   next word starts); the app keeps the upstream default (2.5 s delay is
 //   the other option) so results are comparable with the upstream numbers.
@@ -83,7 +113,6 @@ function post(msg) {
 
 let tilawa = null;
 let session = null;
-let mic = null;
 
 window.TilawaPro = {
   async init(opts) {
@@ -239,50 +268,55 @@ window.TilawaPro = {
         post({ type: e.type, event: e });
       }
     });
-    // Microphone -> session. Rejects with MicrophoneError on denial.
-    // (2026-11-26) Two lessons from the phone tests:
-    //   1. The error NAME matters: MicrophoneError carries the original
-    //      DOMException as `cause`, and without its name ("NotReadableError"
-    //      vs "NotAllowedError") Dart cannot tell a denied mic from a
-    //      busy audio source. Post the name with the message.
-    //   2. "unavailable" (e.g. NotReadableError — the audio source is
-    //      busy or the driver hiccuped) is often transient: retry
-    //      listen() ONCE after a short pause before reporting failure.
-    const micErrorText = (err) => {
-      const name = (err && err.cause && err.cause.name) || (err && err.name) || '';
-      const msg = err && err.message ? err.message : String(err);
-      return 'تعذّر فتح الميكروفون' + (name ? ' [' + name + ']' : '') + ': ' + msg;
-    };
-    const openMic = async () => {
-      try {
-        mic = await tilawa.listen(session);
-      } catch (err) {
-        if (err && err.reason === 'unavailable') {
-          await new Promise((r) => setTimeout(r, 1500));
-          mic = await tilawa.listen(session);
-        } else {
-          throw err;
-        }
-      }
-    };
-    openMic().catch((err) => {
+    // No microphone here: audio arrives via pushPcm() from Dart's
+    // native recorder (2026-11-26). The session is a take — position
+    // and checker events flow through the subscribe() above exactly
+    // as they did when the web listener fed it.
+  },
+
+  // One PCM16 frame from the native recorder (base64 of the raw
+  // little-endian bytes, sampleRate as captured — 16000). Decodes to
+  // Float32Array and calls session.pushAudio. pushAudio accepts any
+  // sample rate and resamples internally (dist/session.js tapIn +
+  // dist/runtime/listener.js:106-112), so the rate is passed through
+  // honestly, never assumed. Resolves after the ack is posted; Dart
+  // awaits this (via runJavaScript) AND counts the pcm-ack, so
+  // backpressure works whether or not the WebView awaits the promise.
+  // A rejected push ends the engine session (dist/session.js: pushAudio
+  // sets failed=true, state=ended) — Dart treats pcm-error as fatal:
+  // it stops the recorder and surfaces the error on the event stream.
+  async pushPcm(base64, sampleRate, seq) {
+    if (!session) {
       post({
-        type: 'error',
-        message: micErrorText(err),
-        reason: err && err.reason ? err.reason : 'unavailable',
+        type: 'pcm-error',
+        seq,
+        message: 'لا توجد جلسة نشطة لدفع الصوت إليها',
+        name: 'NoSession',
       });
-    });
+      return;
+    }
+    try {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const pcm16 = new Int16Array(
+        bytes.buffer,
+        bytes.byteOffset,
+        bytes.byteLength >> 1,
+      );
+      const pcm = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) pcm[i] = pcm16[i] / 32768;
+      await session.pushAudio(pcm, sampleRate);
+      post({ type: 'pcm-ack', seq });
+    } catch (err) {
+      post({
+        type: 'pcm-error',
+        seq,
+        message: err && err.message ? err.message : String(err),
+        name: (err && err.cause && err.cause.name) || (err && err.name) || '',
+      });
+    }
   },
 
   async stopSession() {
-    try {
-      if (mic) {
-        await mic.stop();
-        mic = null;
-      }
-    } catch (_) {
-      /* stopping the mic is best-effort */
-    }
     try {
       if (session) {
         await session.end();

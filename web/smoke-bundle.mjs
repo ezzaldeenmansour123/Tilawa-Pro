@@ -9,7 +9,8 @@
 //     during evaluation dies BEFORE `window.TilawaPro` is defined, and
 //     `test -s` / `node --check` can never catch that);
 //   - after evaluation, `window.TilawaPro` is an object exposing the four
-//     bridge methods Dart calls: init, startSession, stopSession, dispose.
+//     bridge methods Dart calls: init, startSession, pushPcm, stopSession,
+//     dispose.
 //
 // What this does NOT prove (stated honestly):
 //   - no model is loaded, no WASM is instantiated, no audio flows, no
@@ -27,7 +28,7 @@ import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const GLOBAL_NAME = 'TilawaPro';
-const EXPECTED_METHODS = ['init', 'startSession', 'stopSession', 'dispose'];
+const EXPECTED_METHODS = ['init', 'startSession', 'pushPcm', 'stopSession', 'dispose'];
 
 const bundlePath = process.argv[2]
   ? process.argv[2]
