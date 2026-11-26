@@ -440,11 +440,11 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 3, vertical: 2),
                     decoration: BoxDecoration(
-                      color: _wordBackground(RefWord(
+                      color: _wordBackground(_markOf(RefWord(
                         surah: r.surah,
                         ayah: ayah,
                         word: wi + 1,
-                      )),
+                      ))),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
