@@ -696,7 +696,7 @@ Widget softCard(BuildContext c,
     VoidCallback? onTap,
     EdgeInsets padding = const EdgeInsets.all(spaceCard),
     Gradient? gradient}) =>
-    TilawaCard(child: child, onTap: onTap, padding: padding, gradient: gradient);
+    TilawaCard(onTap: onTap, padding: padding, gradient: gradient, child: child);
 
 TextStyle quranStyle(double size, {double h = 2.0, FontWeight w = FontWeight.w600}) =>
     TextStyle(fontSize: size, height: h, fontWeight: w, fontFamily: settings.amiri ? 'Amiri' : null);
@@ -1149,7 +1149,7 @@ class OurWorksPage extends StatelessWidget {
         ]),
         const SizedBox(height: 16),
         softCard(context, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
+          const Row(children: [
             const CircleAvatar(
                 backgroundColor: goldLight,
                 radius: 26,
