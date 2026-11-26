@@ -10,15 +10,25 @@
 //      them to the session EventLog.
 //
 // Known unknowns (to be measured on the S22 Ultra, NOT assumed):
-//   - (RESOLVED 2026-11-26, pro-build-34 phone test) The WebView does NOT
-//     grant microphone access from the app-level RECORD_AUDIO permission
-//     alone: the page's getUserMedia triggers a WebChromeClient
-//     PermissionRequest that is denied with no handler, so the bridge
-//     reported "Permission denied" while setup showed the mic as allowed.
-//     The fix registers AndroidWebViewController
-//     .setOnPlatformPermissionRequest (webview_flutter_android 4.14.1),
-//     granting ONLY the microphone. The old note claiming "webview_flutter
-//     has no onPermissionRequest API" was wrong.
+//   - (RESOLVED 2026-11-26, pro-build-36 phone test) The WebView does
+//     NOT grant microphone access from the app-level RECORD_AUDIO
+//     permission alone: the page's getUserMedia triggers a
+//     WebChromeClient PermissionRequest that is denied with no handler,
+//     so the bridge reported "Permission denied" while setup showed
+//     the mic as allowed. A handler (setOnPlatformPermissionRequest,
+//     webview_flutter_android 4.14.1) fixed the DENIAL — but the next
+//     failure was NotReadableError "Could not start audio source": the
+//     audio source genuinely will not start inside the WebView on this
+//     phone. The WebView mic path was therefore ABANDONED (2026-11-26):
+//     audio is captured NATIVELY (package `record`, 16 kHz mono PCM16,
+//     see native_mic.dart) and pushed into the engine with
+//     session.pushAudio — the engine is source-agnostic by design
+//     (web startMicrophone only feeds pushAudio(gated, 16000)). The
+//     WebView never calls getUserMedia anymore, so the permission
+//     handler was REMOVED (it guarded a path that no longer exists;
+//     keeping it would mislead the next reader into believing the mic
+//     still flows through the WebView). RECORD_AUDIO is requested
+//     natively via permission_handler by the setup screen.
 //   - Whether WebGPU is available inside the WebView (the `backend` field
 //     of the capabilities event tells us: "webgpu" | "wasm" | "cpu").
 //   - WASM is multi-threaded in Android WebView now that LocalServer
@@ -31,15 +41,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'event_log.dart';
 import 'local_server.dart';
 import 'model_manager.dart';
 import 'models.dart';
+import 'native_mic.dart';
 import 'speech_engine.dart';
 
 /// App version + build, mirrored from pubspec.yaml (`version: 1.1.0+1`).
@@ -48,15 +59,6 @@ import 'speech_engine.dart';
 /// with pubspec.yaml and the '1.1.0+1' literals in main.dart by hand.
 /// A runtime-read version would need package_info_plus.
 const kAppVersion = '1.1.0+1';
-
-/// Whether a WebView permission request may be granted: exactly the
-/// microphone and nothing else. The page only ever asks for audio
-/// capture (getUserMedia audio-only); granting anything else (camera
-/// etc.) would be wrong. Pure function, unit-tested in
-/// test/webview_mic_permission_test.dart.
-bool shouldGrantMicPermission(Set<WebViewPermissionResourceType> types) =>
-    types.length == 1 &&
-    types.contains(WebViewPermissionResourceType.microphone);
 
 class WebViewEngine implements SpeechEngine {
   WebViewEngine({required this.modelManager});
@@ -141,6 +143,26 @@ class WebViewEngine implements SpeechEngine {
   // "surah:ayah" -> display words, from the engine's own ref-v2.json.
   Map<String, List<String>>? _referenceWords;
   bool _listening = false;
+
+  // NATIVE MIC PUMP (2026-11-26): the recorder pushes 100 ms PCM16
+  // frames; each frame is base64'd into the page with pushPcm and the
+  // bridge acks it when the engine consumed it. Two counters bound
+  // the pipeline — Dart-side frames still waiting to be sent
+  // (_pumpQueued) and frames sent but not yet acked (_unackedPcm).
+  // Their sum is `pending`: at >= 10 (1 s of audio) the recorder is
+  // backpressure-paused at the source, at <= 4 it resumes, at >= 30
+  // (3 s) the engine is declared stalled — a named failure, never a
+  // silent drop and never unbounded memory. The pump chain is strictly
+  // ordered, so frames can never overtake each other into the engine.
+  final _mic = NativeMicRecorder();
+  int _pcmSequence = 0;
+  int _unackedPcm = 0;
+  int _pumpQueued = 0;
+  Future<void> _pump = Future<void>.value();
+  bool _micBackpressurePaused = false;
+  bool _pcmFailureReported = false;
+
+  int get _pcmPending => _pumpQueued + _unackedPcm;
 
   /// Permanent diagnostics (Phase 2, 2.3): the last JS console error and
   /// the last failed subresource seen by the WebView, so a bridge failure
@@ -235,7 +257,6 @@ class WebViewEngine implements SpeechEngine {
       Directory(modelManager.referenceFile.parent.path),
     );
     setStage('جارٍ تحميل صفحة المحرك…');
-    final controllerCreated = _controller == null;
     _controller ??= WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setOnConsoleMessage(_onConsoleMessage)
@@ -264,25 +285,12 @@ class WebViewEngine implements SpeechEngine {
         'TilawaBridge',
         onMessageReceived: _onBridgeMessage,
       );
-    // MICROPHONE (2026-11-26): register the WebView permission handler
-    // ONCE, when the controller is created (before loadRequest). The
-    // app-level RECORD_AUDIO permission (permission_handler, requested
-    // by the UI before load()) is NOT enough: the page's getUserMedia
-    // triggers a WebChromeClient PermissionRequest inside the WebView,
-    // and with no handler the WebView denies it — the pro-build-34
-    // phone test proved exactly that ("Permission denied" while setup
-    // showed the mic as allowed). Grant ONLY the microphone.
-    if (controllerCreated &&
-        _controller!.platform is AndroidWebViewController) {
-      await (_controller!.platform as AndroidWebViewController)
-          .setOnPlatformPermissionRequest((request) async {
-        if (shouldGrantMicPermission(request.types)) {
-          await request.grant();
-        } else {
-          await request.deny();
-        }
-      });
-    }
+    // NOTE (2026-11-26): no WebView permission handler is registered
+    // anymore. The old handler granted the mic for the page's
+    // getUserMedia — but the WebView audio source will not start on
+    // the S22 Ultra even with the grant, so capture moved to the
+    // native recorder (native_mic.dart) and the page never asks for
+    // any permission now.
     _pageLoaded = Completer<void>();
     await _controller!.loadRequest(Uri.parse('${_server!.baseUrl}tilawa.html'));
     await _pageLoaded!.future.timeout(
@@ -596,6 +604,37 @@ class WebViewEngine implements SpeechEngine {
         final ev = _parsePosition(payload);
         await _log?.append('position', payload, audioMs: ev.timeMs);
         _events.add(ev);
+      case 'pcm-ack':
+        // One pushed frame was consumed by the engine: the ack that
+        // bounds the pipeline. Decrement (floor 0 — a stale ack from a
+        // previous segment must never drive the counter negative) and
+        // resume the recorder if backpressure had paused it.
+        if (_unackedPcm > 0) _unackedPcm--;
+        if (_micBackpressurePaused && _pcmPending <= 4) {
+          _micBackpressurePaused = false;
+          await _mic.resume();
+          await _log?.append(
+            'meta',
+            {'event': 'pcm-backpressure-resume', 'pending': _pcmPending},
+            audioMs: null,
+          );
+        }
+      case 'pcm-error':
+        // A pushed frame was rejected: the engine session is dead
+        // (session.js pushAudio ends the session on a failed push), so
+        // no further audio may be sent. Stop the recorder, release the
+        // session, and surface the named error on the event stream —
+        // the session screen routes stream errors to the failed screen.
+        // The bridge names the failure (err.name, e.g. SessionEnded
+        // or an inference error); never show a bare message.
+        await _stopNativeMic();
+        _listening = false;
+        _events.addError(SpeechEngineException(
+          'فشل دفع الصوت إلى المحرك'
+          '${(data['name'] as String?)?.isNotEmpty == true ? ' [${data['name']}]' : ''}: '
+          '${(data['message'] ?? 'خطأ غير معروف') as String}',
+          reason: 'pcm-error',
+        ));
       case 'checker':
         final payload = (data['event'] as Map).cast<String, dynamic>();
         final ev = _parseChecker(payload);
@@ -665,7 +704,7 @@ class WebViewEngine implements SpeechEngine {
       throw SpeechEngineException('حمّل النموذج أولاً (load قبل startSession)');
     }
     // Never run two recording sessions at once: the bridge holds a single
-    // `session`/`mic`, so a second start would silently hijack the first.
+    // `session`, so a second start would silently hijack the first.
     if (_listening) {
       throw SpeechEngineException(
           'جلسة تسجيل أخرى تعمل بالفعل — أنهِها أو أوقفها أولاً');
@@ -674,15 +713,162 @@ class WebViewEngine implements SpeechEngine {
       throw ArgumentError('memorization requires a passage');
     }
     _listening = true;
-    _controller!.runJavaScript(
-      'window.TilawaPro.startSession(${jsonEncode({
-        'mode': mode.name,
-        'surah': passage?.surah,
-        'fromAyah': passage?.fromAyah,
-        'toAyah': passage?.toAyah,
-      })});',
-    );
+    // The JS session creation + the native mic start are async, but
+    // this method must stay synchronous (the UI subscribes to the
+    // returned stream immediately). Failures from either step arrive
+    // on the stream via _events.addError — the session screen routes
+    // stream errors to the failed screen, exactly as the old bridge
+    // 'error' path did. Nothing here is allowed to fail silently.
+    unawaited(_startSessionAndMic(mode, passage));
     return _events.stream;
+  }
+
+  /// Creates the JS engine session, then starts the native recorder
+  /// and pumps its frames into the session. The JS call is awaited
+  /// first: pushPcm needs a live session, and a frame arriving before
+  /// startSession ran would be rejected as NoSession.
+  Future<void> _startSessionAndMic(SessionMode mode, Passage? passage) async {
+    try {
+      await _controller!.runJavaScript(
+        'window.TilawaPro.startSession(${jsonEncode({
+          'mode': mode.name,
+          'surah': passage?.surah,
+          'fromAyah': passage?.fromAyah,
+          'toAyah': passage?.toAyah,
+        })});',
+      );
+      _pcmSequence = 0;
+      _unackedPcm = 0;
+      _pumpQueued = 0;
+      _pcmFailureReported = false;
+      _micBackpressurePaused = false;
+      await _mic.start(onFrame: _onMicFrame, onError: _onMicError);
+    } catch (e) {
+      // Mic or JS failure after the stream was returned: release
+      // everything so a retry starts clean, then surface the named
+      // error on the stream (never a silent dead session).
+      await _stopNativeMic();
+      await _controller?.runJavaScript('window.TilawaPro.stopSession();');
+      _listening = false;
+      _events.addError(e is SpeechEngineException
+          ? e
+          : e is NativeMicException
+              ? SpeechEngineException(
+                  'تعذّر فتح الميكروفون الأصلي [${e.reason.name}]: '
+                  '${e.message}',
+                  reason: 'mic-${e.reason.name}',
+                )
+              : SpeechEngineException('تعذّر بدء الجلسة: $e'));
+    }
+  }
+
+  /// One recorder frame, queued into the strictly-ordered pump.
+  /// The chain never breaks: [_sendPcmFrame] catches everything
+  /// internally, so one failed send cannot stall later frames.
+  void _onMicFrame(Uint8List frame, int sequence) {
+    _pumpQueued++;
+    _pump = _pump.then((_) => _sendPcmFrame(frame, sequence));
+  }
+
+  /// Sends one frame to the page and maintains the backpressure
+  /// window. The await on runJavaScript is itself a backpressure
+  /// signal when the WebView awaits the JS promise (modern WebView
+  /// resolves evaluateJavascript with the promise's value); when it
+  /// does not, the pcm-ack is the signal. Either way the window
+  /// accounting below stays correct, because the ack is the only
+  /// place _unackedPcm is decremented.
+  Future<void> _sendPcmFrame(Uint8List frame, int sequence) async {
+    _pumpQueued--;
+    _unackedPcm++;
+    await _maybePauseRecorder();
+    try {
+      final b64 = base64Encode(frame);
+      await _controller?.runJavaScript(
+        'window.TilawaPro.pushPcm("$b64", '
+        '${NativeMicRecorder.kSampleRate}, $sequence);',
+      );
+    } catch (e) {
+      // The JS call itself failed (WebView gone, page dead) — the ack
+      // for this frame will never come. Count it as failed and surface
+      // once; the recorder keeps running into the same failure, so the
+      // stall guard below ends the session instead of looping forever.
+      _unackedPcm--;
+      _reportPcmFailure('فشل إرسال الصوت إلى المحرك: $e');
+    }
+  }
+
+  /// Backpressure: pause the native capture when the pipeline holds
+  /// >= 10 frames (1 s of audio) and resume it at <= 4. A pause
+  /// creates a gap in the captured audio (the user keeps speaking
+  /// while nothing is recorded) — that gap is logged as a meta line
+  /// so a session log never hides it, and the pause only ever
+  /// triggers when the engine is slower than realtime, which the web
+  /// path's realtime position events show it is not on this phone.
+  Future<void> _maybePauseRecorder() async {
+    if (_micBackpressurePaused) return;
+    if (_pcmPending >= 10 && _mic.state == NativeMicState.recording) {
+      _micBackpressurePaused = true;
+      await _mic.pause();
+      await _log?.append(
+        'meta',
+        {'event': 'pcm-backpressure-pause', 'pending': _pcmPending},
+        audioMs: null,
+      );
+    }
+    if (_pcmPending >= 30 && !_pcmFailureReported) {
+      _reportPcmFailure(
+        'المحرك متوقف عن معالجة الصوت (‏$_pcmPending إطاراً معلقاً) — '
+        'أنهِ الجلسة وأعد المحاولة.',
+      );
+    }
+  }
+
+  /// A fatal pipeline failure: stop the recorder, release the session,
+  /// and surface ONE named error on the stream. Reports once per
+  /// session — a cascade of failures still shows a single card.
+  void _reportPcmFailure(String message) {
+    if (_pcmFailureReported) return;
+    _pcmFailureReported = true;
+    unawaited(_stopNativeMic());
+    unawaited(
+        _controller?.runJavaScript('window.TilawaPro.stopSession();'));
+    _listening = false;
+    _events.addError(SpeechEngineException(message, reason: 'pcm-error'));
+  }
+
+  /// A recorder failure (start or mid-stream): the mic is already
+  /// broken, so stop what is left and surface the named error.
+  void _onMicError(Object error) {
+    unawaited(_stopNativeMic());
+    unawaited(
+        _controller?.runJavaScript('window.TilawaPro.stopSession();'));
+    _listening = false;
+    _events.addError(error is NativeMicException
+        ? SpeechEngineException(
+            'تعذّر فتح الميكروفون الأصلي [${error.reason.name}]: '
+            '${error.message}',
+            reason: 'mic-${error.reason.name}',
+          )
+        : SpeechEngineException('تعذّر فتح الميكروفون الأصلي: $error'));
+  }
+
+  /// Stops the native recorder and drains the pump: stop() emits the
+  /// buffered tail as a final frame, and awaiting [_pump] guarantees
+  /// that frame was SENT before the caller ends the JS session
+  /// (session.end() is enqueued after pending pushes inside the
+  /// engine, so the last words are never cut off).
+  Future<void> _stopNativeMic() async {
+    await _mic.stop();
+    // Drain guard: the pump should empty in milliseconds, but a stuck
+    // send must never freeze the session teardown (endSegment /
+    // endSession) — cap the wait. A late frame is not silently lost:
+    // the engine's own job queue still drains in order and session.end()
+    // flushes the resampler tail.
+    await _pump.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => debugPrint(
+          '[WebViewEngine] PCM pump drain timed out — continuing teardown'),
+    );
   }
 
   /// Called by the UI when a session starts, so the log carries the
@@ -732,6 +918,11 @@ class WebViewEngine implements SpeechEngine {
       // not an OS airplane-mode reading: the app has no connectivity
       // plugin, so it cannot observe the OS radio state.
       'network': 'localhost-only',
+      // Mic transport (2026-11-26): native capture via package
+      // `record` (16 kHz mono PCM16, 100 ms frames) pushed with
+      // session.pushAudio — the WebView never calls getUserMedia.
+      'micTransport': 'native-record/pushAudio',
+      'pcmFrameMs': 100,
     });
   }
 
@@ -739,6 +930,10 @@ class WebViewEngine implements SpeechEngine {
   Future<void> endSession() async {
     if (_listening) {
       _listening = false;
+      // Native mic first: stop() emits the buffered tail as a final
+      // frame and drains the pump, so the last words reach the engine
+      // before its session ends.
+      await _stopNativeMic();
       await _controller?.runJavaScript('window.TilawaPro.stopSession();');
     }
     // Always close the log, even when called after a pause (where
@@ -764,6 +959,7 @@ class WebViewEngine implements SpeechEngine {
   Future<void> endSegment({required int segment}) async {
     if (!_listening) return;
     _listening = false;
+    await _stopNativeMic();
     await _controller?.runJavaScript('window.TilawaPro.stopSession();');
     await _log?.append(
       'meta',
@@ -796,6 +992,7 @@ class WebViewEngine implements SpeechEngine {
   @override
   Future<void> dispose() async {
     await endSession();
+    await _mic.dispose();
     await _controller?.runJavaScript(
         'window.TilawaPro && window.TilawaPro.dispose();');
     await _server?.stop();
