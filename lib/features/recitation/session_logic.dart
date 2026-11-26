@@ -244,6 +244,8 @@ class SessionResult {
     required this.startedAt,
     required this.endedAt,
     this.confidenceByWord = const {},
+    this.matchedWordKeys = const [],
+    this.needsReviewWordKeys = const [],
   });
 
   final int surah;
@@ -282,6 +284,17 @@ class SessionResult {
   /// screen shows "confidence when available" from this map, never a
   /// guessed number.
   final Map<String, double> confidenceByWord;
+
+  /// Words the engine matched (locked, confidence >= [kMinConfidence]),
+  /// keyed "surah:ayah:word". Stored so the ayah-review screen can
+  /// highlight them later, and so a later session can credit a repeated
+  /// correct recitation of a previously mistaken word (see ProgressStore).
+  /// Sessions recorded before this field existed load as an empty list.
+  final List<String> matchedWordKeys;
+
+  /// Words with an `uncertain` checker event, keyed "surah:ayah:word".
+  /// Never errors — shown as "needs re-check" on the review screens.
+  final List<String> needsReviewWordKeys;
 
   /// Number of recording segments (1 when the session was never paused).
   final int segments;
@@ -325,6 +338,8 @@ class SessionResult {
             .toList(),
         'notes': notes,
         'confidenceByWord': confidenceByWord,
+        'matchedWordKeys': matchedWordKeys,
+        'needsReviewWordKeys': needsReviewWordKeys,
         'segments': segments,
         'startedAt': startedAt.toIso8601String(),
         'endedAt': endedAt.toIso8601String(),
@@ -374,6 +389,10 @@ class SessionResult {
       notes: ((j['notes'] as List?) ?? const []).cast<String>(),
       confidenceByWord: ((j['confidenceByWord'] as Map<String, dynamic>?) ?? const {})
           .map((k, v) => MapEntry(k, (v as num).toDouble())),
+      matchedWordKeys:
+          ((j['matchedWordKeys'] as List?) ?? const []).cast<String>(),
+      needsReviewWordKeys:
+          ((j['needsReviewWordKeys'] as List?) ?? const []).cast<String>(),
       segments: (j['segments'] as num?)?.toInt() ?? 1,
       startedAt: DateTime.parse(j['startedAt'] as String),
       endedAt: DateTime.parse(j['endedAt'] as String),
@@ -439,6 +458,10 @@ SessionResult computeSessionResult({
     notes: List<String>.from(tracker.notes),
     confidenceByWord: tracker.confidenceByWord
         .map((k, v) => MapEntry(k.toString(), v)),
+    matchedWordKeys:
+        tracker.matched.map((w) => w.toString()).toList()..sort(),
+    needsReviewWordKeys:
+        tracker.needsReview.map((w) => w.toString()).toList()..sort(),
     segments: segments,
     startedAt: startedAt,
     endedAt: endedAt,

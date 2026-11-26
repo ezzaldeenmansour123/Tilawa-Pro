@@ -20,8 +20,91 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'models.dart';
 import 'session_logic.dart';
 import 'speech_engine.dart';
+
+/// Correct repetitions in a row that clear one mistake
+/// (the rule shown on the «أخطائي» screen).
+const int kMistakeClearStreak = 3;
+
+/// One confirmed tasmee' mistake, tracked per word + error class until
+/// it is cleared by [kMistakeClearStreak] correct repetitions in a row.
+/// Stored in the same progress.json as the session history (no DB schema
+/// change): a mistake is identified by "surah:ayah:word:class".
+class StoredMistake {
+  StoredMistake({
+    required this.surah,
+    required this.ayah,
+    required this.word,
+    required this.errorClass,
+    required this.firstSeen,
+    required this.lastSeen,
+    this.count = 1,
+    this.correctStreak = 0,
+    this.cleared = false,
+  });
+
+  static String idFor(int surah, int ayah, int word, ErrorClass cls) =>
+      '$surah:$ayah:$word:${cls.name}';
+
+  String get id => idFor(surah, ayah, word, errorClass);
+
+  final int surah;
+  final int ayah;
+  final int word;
+  final ErrorClass errorClass;
+  final DateTime firstSeen;
+
+  /// Last session that touched this mistake (error recurrence or a
+  /// correct repetition).
+  DateTime lastSeen;
+
+  /// How many sessions confirmed this error (recurrences included).
+  int count;
+
+  /// Correct repetitions in a row (resets to 0 on any recurrence).
+  int correctStreak;
+
+  bool cleared;
+
+  Map<String, dynamic> toJson() => {
+        'surah': surah,
+        'ayah': ayah,
+        'word': word,
+        'errorClass': errorClass.name,
+        'firstSeen': firstSeen.toIso8601String(),
+        'lastSeen': lastSeen.toIso8601String(),
+        'count': count,
+        'correctStreak': correctStreak,
+        'cleared': cleared,
+      };
+
+  factory StoredMistake.fromJson(Map<String, dynamic> j) {
+    ErrorClass classFrom(String? s) => switch (s) {
+          'omittedWord' => ErrorClass.omittedWord,
+          'addedWord' => ErrorClass.addedWord,
+          'skippedPassage' => ErrorClass.skippedPassage,
+          _ => ErrorClass.wrongWord,
+        };
+    DateTime dateOrNow(dynamic v) {
+      final d = v is String ? DateTime.tryParse(v) : null;
+      return d ?? DateTime.now();
+    }
+
+    return StoredMistake(
+      surah: (j['surah'] as num).toInt(),
+      ayah: (j['ayah'] as num).toInt(),
+      word: (j['word'] as num?)?.toInt() ?? 1,
+      errorClass: classFrom(j['errorClass'] as String?),
+      firstSeen: dateOrNow(j['firstSeen']),
+      lastSeen: dateOrNow(j['lastSeen']),
+      count: (j['count'] as num?)?.toInt() ?? 1,
+      correctStreak: (j['correctStreak'] as num?)?.toInt() ?? 0,
+      cleared: j['cleared'] as bool? ?? false,
+    );
+  }
+}
 
 /// One stored session result + its error locations (for resume/history).
 class StoredSession {
@@ -149,7 +232,120 @@ class ProgressStore {
       dates['${result.surah}:$ayah'] = result.endedAt.toIso8601String();
     }
     _data['reviewDates'] = dates;
+    _updateMistakes(result);
     await _save();
+  }
+
+  /// Updates the detailed mistake log from one finished session:
+  /// - every confirmed error is recorded (new) or counted (recurrence,
+  ///   which also resets its correct streak and reopens it if cleared);
+  /// - an open mistake whose word was MATCHED in this session (and had no
+  ///   confirmed error at that word) gains one correct repetition;
+  ///   [kMistakeClearStreak] in a row clears it;
+  /// - a mistake in an ayah this session never reviewed is untouched.
+  void _updateMistakes(SessionResult result) {
+    final mistakes = this.mistakes;
+    final byId = <String, StoredMistake>{
+      for (final m in mistakes) m.id: m
+    };
+    final matchedKeys = result.matchedWordKeys.toSet();
+    final sessionErrorIds = <String>{};
+    for (final e in result.errors) {
+      final id = StoredMistake.idFor(
+          e.location.surah, e.location.ayah, e.location.word, e.errorClass);
+      sessionErrorIds.add(id);
+      final existing = byId[id];
+      if (existing == null) {
+        final nm = StoredMistake(
+          surah: e.location.surah,
+          ayah: e.location.ayah,
+          word: e.location.word,
+          errorClass: e.errorClass,
+          firstSeen: result.endedAt,
+          lastSeen: result.endedAt,
+        );
+        mistakes.add(nm);
+        byId[id] = nm;
+      } else {
+        existing.count += 1;
+        existing.correctStreak = 0;
+        existing.lastSeen = result.endedAt;
+        existing.cleared = false;
+      }
+    }
+    for (final m in mistakes) {
+      if (m.cleared) continue;
+      if (m.surah != result.surah) continue;
+      if (!result.reviewedAyahs.contains(m.ayah)) continue;
+      if (sessionErrorIds.contains(m.id)) continue;
+      if (matchedKeys.contains('${m.surah}:${m.ayah}:${m.word}')) {
+        m.correctStreak += 1;
+        m.lastSeen = result.endedAt;
+        if (m.correctStreak >= kMistakeClearStreak) m.cleared = true;
+      }
+    }
+    _data['mistakes'] = mistakes.map((m) => m.toJson()).toList();
+  }
+
+  /// All recorded mistakes, newest first (open and cleared).
+  List<StoredMistake> get mistakes {
+    final list = _data['mistakes'] as List?;
+    if (list == null) return [];
+    final out = <StoredMistake>[];
+    for (final e in list) {
+      try {
+        if (e is Map<String, dynamic>) out.add(StoredMistake.fromJson(e));
+      } catch (_) {
+        // Skip one corrupt entry; keep the rest.
+      }
+    }
+    out.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+    return out;
+  }
+
+  /// Mistakes not yet cleared (correct streak < [kMistakeClearStreak]).
+  List<StoredMistake> get openMistakes =>
+      mistakes.where((m) => !m.cleared).toList();
+
+  /// Mistakes cleared by [kMistakeClearStreak] correct repetitions.
+  List<StoredMistake> get clearedMistakes =>
+      mistakes.where((m) => m.cleared).toList();
+
+  /// Deletes one mistake record (explicit user action from «أخطائي»).
+  Future<void> deleteMistake(String id) async {
+    if (!_loaded) await load();
+    final kept = mistakes.where((m) => m.id != id).toList();
+    _data['mistakes'] = kept.map((m) => m.toJson()).toList();
+    await _save();
+  }
+
+  // ── Quiz completions ───────────────────────────────────────────────
+
+  static String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  /// Dates (yyyy-MM-dd) on which a full 5-question quiz was completed.
+  List<String> get quizCompletionDates {
+    final list = _data['quizCompletions'] as List?;
+    if (list == null) return [];
+    return list.whereType<String>().toList();
+  }
+
+  /// True when a full quiz was completed today (used by «مراجعة يومية»).
+  bool get quizDoneToday =>
+      quizCompletionDates.contains(_dateKey(DateTime.now()));
+
+  /// Records today's full-quiz completion (once per day).
+  Future<void> recordQuizCompletion() async {
+    if (!_loaded) await load();
+    final dates = quizCompletionDates;
+    final today = _dateKey(DateTime.now());
+    if (!dates.contains(today)) {
+      dates.add(today);
+      _data['quizCompletions'] = dates;
+      await _save();
+    }
   }
 
   /// Ayahs with repeated confirmed errors, most frequent first.
