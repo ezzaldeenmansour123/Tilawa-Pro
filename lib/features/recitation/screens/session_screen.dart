@@ -48,6 +48,7 @@ class SessionScreen extends StatefulWidget {
     required this.words,
     required this.progressStore,
     this.loadMs,
+    this.returnResult = false,
   });
 
   final WebViewEngine engine;
@@ -63,6 +64,11 @@ class SessionScreen extends StatefulWidget {
   /// Milliseconds the engine load took (measured by the setup screen),
   /// shown in the live stats; null when unknown.
   final int? loadMs;
+
+  /// When true (the quiz flow), the results page pops WITH the
+  /// [SessionResult] so the caller can record the question's outcome.
+  /// Default false: the results page returns to the setup as before.
+  final bool returnResult;
 
   @override
   State<SessionScreen> createState() => _SessionScreenState();
@@ -277,6 +283,7 @@ class _SessionScreenState extends State<SessionScreen> {
           words: widget.words,
           engine: widget.engine,
           progressStore: widget.progressStore,
+          returnResult: widget.returnResult,
         ),
       ),
     );

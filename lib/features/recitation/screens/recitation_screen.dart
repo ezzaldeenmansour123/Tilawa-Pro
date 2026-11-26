@@ -22,12 +22,12 @@ import '../../../core/widgets.dart';
 
 import '../progress_store.dart';
 import '../session_logic.dart';
+import '../session_starter.dart';
 import '../speech_engine.dart';
 import '../surah_names.dart';
 import '../webview_engine.dart';
 import 'logs_screen.dart';
 import 'model_screen.dart';
-import 'session_screen.dart';
 
 class PresetPassage {
   const PresetPassage(this.label, this.passage);
@@ -44,11 +44,24 @@ const kPresets = [
 
 class RecitationScreen extends StatefulWidget {
   const RecitationScreen(
-      {super.key, required this.engine, required this.progressStore});
+      {super.key,
+      required this.engine,
+      required this.progressStore,
+      this.initialPassage,
+      this.initialMode,
+      this.initialTier});
   final WebViewEngine engine;
 
   /// Local progress store, created once in main.dart.
   final ProgressStore progressStore;
+
+  /// Pre-selected passage (e.g. from the progress page's «إعادة» button).
+  /// When given, the custom picker opens on it.
+  final ({int surah, int fromAyah, int toAyah})? initialPassage;
+
+  /// Pre-selected mode / tier (same source).
+  final RecitationMode? initialMode;
+  final String? initialTier;
   @override
   State<RecitationScreen> createState() => _RecitationScreenState();
 }
@@ -86,6 +99,15 @@ class _RecitationScreenState extends State<RecitationScreen> {
   @override
   void initState() {
     super.initState();
+    final p = widget.initialPassage;
+    if (p != null) {
+      _custom = true;
+      _surah = p.surah;
+      _from = p.fromAyah;
+      _to = p.toAyah;
+    }
+    if (widget.initialMode != null) _mode = widget.initialMode!;
+    if (widget.initialTier != null) _tier = widget.initialTier!;
     _loadProgress();
     _refreshStatus();
   }
@@ -118,6 +140,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
   bool get _engineReady =>
       widget.engine.isLoaded && widget.engine.loadedTier == _tier;
 
+  /// Starts a session through the shared gate (session_starter.dart):
+  /// the five checks run in the same order as before, and this screen
+  /// only mirrors the gate's status back into its checklist rows.
   Future<void> _start() async {
     if (_loading) return;
     setState(() {
@@ -125,112 +150,29 @@ class _RecitationScreenState extends State<RecitationScreen> {
       _loadingLabel = 'جارٍ فحص الجاهزية…';
       _error = null;
     });
-    try {
-      // 1. Model installed + verified.
-      final info = await widget.engine.modelManager.status(_tier);
-      if (mounted) setState(() => _modelInfo = info);
-      if (info.status != ModelStatus.ready) {
-        if (mounted) {
-          setState(() => _error =
-              'النموذج غير جاهز: ${info.error ?? 'غير مثبَّت'} — '
-              'نزّله أولاً من صفحة «النموذج».');
-        }
-        return;
-      }
-      // 2. WASM runtime files.
-      final wasm = await widget.engine.modelManager.ortWasmReady();
-      if (mounted) setState(() => _wasmReady = wasm);
-      if (!wasm) {
-        if (mounted) {
-          setState(() => _error =
-              'ملفات تشغيل المحرك (WASM) غير موجودة — '
-              'نزّلها من صفحة «النموذج» (زر التنزيل يشملها).');
-        }
-        return;
-      }
-      // 3. Microphone permission.
-      var micState = micPermissionState(await Permission.microphone.status);
-      if (!micState.canStart && micState.canRequestAgain) {
-        micState =
-            micPermissionState(await Permission.microphone.request());
-      }
-      if (mounted) setState(() => _micState = micState);
-      if (!micState.canStart) {
-        if (mounted) setState(() => _error = micState.message);
-        return;
-      }
-      // 4. Engine load (skip when already loaded with this tier).
-      int? loadMs;
-      if (!_engineReady) {
-        if (mounted) {
-          setState(() {
-            _loadingLabel = 'جارٍ تحميل النموذج…';
-            _engineLoadAttempted = true;
-          });
-        }
-        final t0 = DateTime.now();
-        // onStage mirrors the engine's progress step by step, so a hang
-        // is visible (which stage it stuck on) instead of a blind wait
-        // — the poc-12 phone failure waited 120 s with no clue.
-        await widget.engine.load(
-          tier: _tier,
-          onStage: (label) {
-            if (mounted) setState(() => _loadingLabel = label);
-          },
-        );
-        loadMs = DateTime.now().difference(t0).inMilliseconds;
-        if (mounted) {
-          setState(() {
-            _lastLoadMs = loadMs;
-            _engineLoadFailed = false;
-          });
-        }
-      } else {
-        loadMs = _lastLoadMs;
-      }
-      // 5. Passage text from the engine's own reference.
-      final passage = _passage;
-      final words = widget.engine.passageWords(passage);
-      if (words == null) {
-        if (mounted) {
-          setState(() => _error = 'تعذّر تحميل نص المقطع من المرجع.');
-        }
-        return;
-      }
-      // 6. Navigate to the real session page.
-      if (!mounted) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => SessionScreen(
-            engine: widget.engine,
-            passage: passage,
-            mode: _mode,
-            tier: _tier,
-            words: words,
-            progressStore: widget.progressStore,
-            loadMs: loadMs,
-          ),
-        ),
-      );
-      await _refreshStatus();
-    } on SpeechEngineException catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          // Only a load failure marks the engine row failed: a model /
-          // WASM / microphone failure is already named on its own row
-          // or in the error card, and must not repaint the engine row.
-          if (_engineLoadAttempted && !_engineReady) {
-            _engineLoadFailed = true;
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _error = 'خطأ غير متوقع: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    final out = await startRecitationSession(
+      context: context,
+      engine: widget.engine,
+      progressStore: widget.progressStore,
+      passage: _passage,
+      mode: _mode,
+      tier: _tier,
+      onLoadingLabel: (label) {
+        if (mounted) setState(() => _loadingLabel = label);
+      },
+    );
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _modelInfo = out.status.modelInfo;
+      _wasmReady = out.status.wasmReady;
+      _micState = out.status.mic;
+      _lastLoadMs = out.status.loadMs ?? _lastLoadMs;
+      _engineLoadAttempted = out.status.engineLoadAttempted;
+      _engineLoadFailed = out.status.engineLoadFailed;
+      _error = out.error;
+    });
+    await _refreshStatus();
   }
 
   Future<void> _openSettings() async {
