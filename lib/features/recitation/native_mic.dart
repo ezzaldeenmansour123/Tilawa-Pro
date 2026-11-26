@@ -248,7 +248,7 @@ class NativeMicRecorder {
         if (!_stopping &&
             (_state == NativeMicState.recording ||
                 _state == NativeMicState.paused)) {
-          _onError?.call(const NativeMicException(
+          _onError?.call(NativeMicException(
             MicFailureReason.recorderStream,
             'انتهى دفق الصوت من الميكروفون فجأة أثناء التسجيل.',
           ));
