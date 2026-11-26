@@ -1150,14 +1150,14 @@ class OurWorksPage extends StatelessWidget {
         const SizedBox(height: 16),
         softCard(context, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Row(children: [
-            const CircleAvatar(
+            CircleAvatar(
                 backgroundColor: goldLight,
                 radius: 26,
                 child: Text('عز',
                     style: TextStyle(
                         fontSize: 18, fontWeight: FontWeight.w800, color: gold))),
-            const SizedBox(width: 12),
-            const Expanded(
+            SizedBox(width: 12),
+            Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('عز السنة',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
@@ -1166,7 +1166,7 @@ class OurWorksPage extends StatelessWidget {
                     style: TextStyle(fontSize: 13, height: 1.6)),
               ]),
             ),
-            const StatusChip(label: 'الإصدار 1.1.1', tone: StatusTone.ok),
+            StatusChip(label: 'الإصدار 1.1.1', tone: StatusTone.ok),
           ]),
           const SizedBox(height: 12),
           const Text(
