@@ -84,7 +84,7 @@ ThemeData buildTheme(bool dark) {
     // الوضع الليلي بلا تغيير: 0xFF101D24.
     scaffoldBackgroundColor: dark ? const Color(0xFF101D24) : bgCream,
     // تقرير إعادة التصميم §d.2: سمات مركزية جديدة في كلا الوضعين.
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: dark ? const Color(0xFF1C2B33) : surfaceCard,
       elevation: 0,
       shadowColor: Colors.black.withValues(alpha: dark ? 0.25 : 0.06),
