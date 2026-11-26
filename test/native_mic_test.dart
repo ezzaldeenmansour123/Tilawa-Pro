@@ -88,7 +88,7 @@ void main() {
     });
 
     test('capture config matches the web path constraints exactly', () {
-      final c = NativeMicRecorder.kConfig;
+      const c = NativeMicRecorder.kConfig;
       expect(c.encoder, AudioEncoder.pcm16bits);
       expect(c.sampleRate, 16000);
       expect(c.numChannels, 1);
