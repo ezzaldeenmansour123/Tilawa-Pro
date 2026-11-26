@@ -336,7 +336,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
             'يعمل التسميع كاملاً دون إنترنت بعد التنزيل الأول. الصوت لا '
             'يغادر جهازك. تصحيح الكلمات فقط — المحرك لا يقيّم التجويد أو '
             'مخارج الحروف.',
-            style: const TextStyle(color: muted),
+            style: TextStyle(color: muted),
           ),
         ],
       ),
