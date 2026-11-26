@@ -26,7 +26,8 @@ import 'features/data/export_page.dart'; // Pro: صفحة النسخ الاحت�
 import 'features/recitation/model_manager.dart'; // Pro: التسميع الذكي — تنزيل النموذج والتحقق منه
 import 'features/recitation/progress_store.dart'; // Pro: التسميع الذكي — حفظ التقدم
 import 'features/recitation/webview_engine.dart'; // Pro: التسميع الذكي — محرك WebView
-import 'features/recitation/screens/recitation_screen.dart'; // Pro: التسميع الذكي — شاشة الإعداد والبدء
+import 'features/recitation/screens/quiz_screen.dart'; // Pro: التسميع الذكي — اختبار التلاوة (5 أسئلة)
+import 'features/recitation/screens/daily_review_screen.dart'; // Pro: التسميع الذكي — المراجعة اليومية
 import 'package:file_picker/file_picker.dart'; // Pro: اختيار ملف تصدير للاستيراد
 
 
@@ -1067,13 +1068,25 @@ class MorePage extends StatelessWidget {
             Navigator.push(
                 context,
                 MaterialPageRoute(
-                    builder: (_) => RecitationScreen(
-                        engine: recitationEngine, progressStore: recitationProgress)));
+                    builder: (_) => TasmeeQuizScreen(
+                        engine: recitationEngine,
+                        progressStore: recitationProgress,
+                        hifz: hifz)));
           } else {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                 content: Text(
                     'التسميع غير متاح على هذا الجهاز حالياً — أعد تشغيل التطبيق وحاول مجدداً')));
           }
+        }),
+        _row(context, Icons.today_rounded, 'مراجعة يومية', 'اختبار اليوم وأخطاؤك وتقدمك',
+            skyLight, sky, () {
+          Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => DailyReviewScreen(
+                      engine: recitationEngine,
+                      progressStore: recitationProgress,
+                      hifz: hifz)));
         }),
         _row(context, Icons.history_rounded, 'السجل', 'آيات قرأتها مؤخرًا', pinkLight, pink,
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryPage()))),
@@ -1303,9 +1316,10 @@ class _HomePageState extends State<HomePage> {
                           Navigator.push(
                               context,
                               MaterialPageRoute(
-                                  builder: (_) => RecitationScreen(
+                                  builder: (_) => TasmeeQuizScreen(
                                       engine: recitationEngine,
-                                      progressStore: recitationProgress)));
+                                      progressStore: recitationProgress,
+                                      hifz: hifz)));
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
