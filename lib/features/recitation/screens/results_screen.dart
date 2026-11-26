@@ -8,8 +8,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
-import '../../core/theme.dart';
-import '../../core/widgets.dart';
+import '../../../core/theme.dart';
+import '../../../core/widgets.dart';
 import '../models.dart';
 import '../progress_store.dart';
 import '../session_logic.dart';

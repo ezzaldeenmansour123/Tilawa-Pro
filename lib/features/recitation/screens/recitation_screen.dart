@@ -17,8 +17,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../core/theme.dart';
-import '../../core/widgets.dart';
+import '../../../core/theme.dart';
+import '../../../core/widgets.dart';
 
 import '../progress_store.dart';
 import '../session_logic.dart';

@@ -6,8 +6,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
-import '../../core/theme.dart';
-import '../../core/widgets.dart';
+import '../../../core/theme.dart';
+import '../../../core/widgets.dart';
 import '../model_manager.dart';
 import '../speech_engine.dart';
 import '../webview_engine.dart';

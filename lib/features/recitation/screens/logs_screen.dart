@@ -5,8 +5,8 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../core/theme.dart';
-import '../../core/widgets.dart';
+import '../../../core/theme.dart';
+import '../../../core/widgets.dart';
 import '../event_log.dart';
 
 class LogsScreen extends StatefulWidget {
